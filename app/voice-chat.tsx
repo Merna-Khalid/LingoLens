@@ -1,4 +1,3 @@
-import { Recording } from 'expo-audio'; // NEW: For audio recording instance
 import { Audio } from 'expo-av'; // Still needed for Audio.setAudioModeAsync (global audio settings)
 import * as FileSystem from 'expo-file-system'; // Import FileSystem for base64 conversion
 import { router, useLocalSearchParams } from 'expo-router';
@@ -26,7 +25,7 @@ const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
 export default function VoiceChatScreen() {
   const { photoUri: paramImageUri } = useLocalSearchParams();
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [recording, setRecording] = useState<Recording | undefined>(); // Changed type to Recording from expo-audio
+  const [recording, setRecording] = useState<Audio.Recording | undefined>(); // Changed type to Recording from expo-audio
   const [isRecording, setIsRecording] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
@@ -92,7 +91,7 @@ export default function VoiceChatScreen() {
       });
 
       // --- CORRECTED: Use new Recording() and prepare/start methods ---
-      const newRecording = new Recording(); // Create a new Recording instance
+      const newRecording = new Audio.Recording();
       await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       await newRecording.startAsync();
       setRecording(newRecording); // Set the new recording instance
@@ -105,7 +104,7 @@ export default function VoiceChatScreen() {
         setWaveformHeights(prevHeights =>
           prevHeights.map(() => Math.floor(Math.random() * 50) + 5) // Random heights for simulation
         );
-      }, 100); // Update every 100ms
+      }, 100) as any; // Update every 100ms
 
     } catch (err) {
       console.error('Failed to start recording', err);
