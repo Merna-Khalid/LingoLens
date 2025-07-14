@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "LingoLensAlpha",
-    "slug": "LingoLensAlpha",
+    "name": "HelloWorld",
+    "slug": "expo-template-default",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "lingolensalpha",
+    "scheme": "helloworld",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.anonymous.expotemplatedefault"
     },
     "web": {
       "bundler": "metro",
@@ -32,14 +33,6 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone",
-          "recordAudioAndroid": true
         }
       ],
       "expo-audio"
