@@ -1,17 +1,17 @@
+import { LlamaService, LLMS_DIRECTORY } from '@/src/llm/llama.config';
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, Image, TextInput, Dimensions, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem for base64 conversion
+import { NativeLlamaChatMessage } from 'llama.rn/lib/typescript/NativeRNLlama';
 
-const { width } = Dimensions.get('window');
-const API_KEY = "";
 
 // Define chat message interface
 interface ChatMessage {
   id: string;
   text: string;
-  sender: 'user' | 'ai';
+  sender: 'user' | 'system';
   timestamp: string;
 }
 
@@ -30,8 +30,8 @@ export default function TextChatScreen() {
       setMessages([
         {
           id: 'ai-initial',
-          text: "I can see the image. What would you like to discuss about it?",
-          sender: 'ai',
+          text: "Hi, how are you?",
+          sender: 'system',
           timestamp: getTimestamp(),
         },
       ]);
@@ -41,7 +41,6 @@ export default function TextChatScreen() {
     }
   }, [paramImageUri]);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
@@ -74,55 +73,33 @@ export default function TextChatScreen() {
         setMessages(prevMessages => [...prevMessages, {
           id: Date.now().toString(),
           text: "Error: Image is missing for AI processing.",
-          sender: 'ai',
+          sender: 'system',
           timestamp: getTimestamp(),
         }]);
         setAiThinking(false);
         return;
       }
 
-      let chatHistory = [];
-      chatHistory.push({ role: "user", parts: [{ text: userMessage.text }] });
 
-      const payload: any = {
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: userMessage.text },
-              {
-                inlineData: {
-                  mimeType: "image/jpeg", // Assuming JPEG, adjust if needed
-                  data: await FileSystem.readAsStringAsync(imageUri!, { encoding: FileSystem.EncodingType.Base64 })
-                }
-              }
-            ]
-          }
-        ],
-      };
 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-      let aiResponseText = "I'm sorry, I couldn't process that. Please try again.";
-
-      if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
-        aiResponseText = result.candidates[0].content.parts[0].text;
-      } else {
-        console.error("Unexpected AI response structure:", result);
+      const llm = LlamaService.getInstance(LLMS_DIRECTORY + "model.gguf");
+      if (!llm.isInitialized()) {
+        await llm.initialize();
       }
+      console.log(llm);
+      const msgs: NativeLlamaChatMessage[] = messages.map(message => ({
+        role: message.sender,
+        content: message.text
+      }));
+      msgs.push({ role: "user", content: userMessage.text })
+      const res = (await llm.generateCompletion(msgs)).text;
+
+
 
       setMessages(prevMessages => [...prevMessages, {
         id: (Date.now() + 1).toString(),
-        text: aiResponseText,
-        sender: 'ai',
+        text: res,
+        sender: 'system',
         timestamp: getTimestamp(),
       }]);
 
@@ -131,13 +108,14 @@ export default function TextChatScreen() {
       setMessages(prevMessages => [...prevMessages, {
         id: Date.now().toString(),
         text: "Error: Could not get a response from AI.",
-        sender: 'ai',
+        sender: 'system',
         timestamp: getTimestamp(),
       }]);
     } finally {
       setAiThinking(false);
     }
   };
+
 
   return (
     <SafeAreaView style={styles.safeArea}>
