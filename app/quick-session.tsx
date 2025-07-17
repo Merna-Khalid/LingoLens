@@ -39,13 +39,9 @@ export default function QuickSessionScreen() {
   const handleChatAI = () => {
     console.log("Chat AI button pressed!");
     // Implement Chat AI functionality here, potentially passing the imageUri
-    router.push({ pathname: '/text-chat', params: { photoUri: imageUri } });
+    router.push({ pathname: '/chat', params: { photoUri: imageUri } });
   };
 
-  const handleVoiceAI = () => {
-    console.log("Voice AI button pressed!");
-    router.push({ pathname: '/voice-chat', params: { photoUri: imageUri } });
-  };
 
   if (loading) {
     return (
@@ -95,10 +91,7 @@ export default function QuickSessionScreen() {
           <Text style={styles.controlIcon}>💬</Text>
           <Text style={styles.controlText}>Chat AI</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.controlButton} onPress={handleVoiceAI}>
-          <Text style={styles.controlIcon}>🎤</Text>
-          <Text style={styles.controlText}>Voice AI</Text>
-        </TouchableOpacity>
+
       </View>
     </SafeAreaView>
   );

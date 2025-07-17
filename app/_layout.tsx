@@ -30,7 +30,8 @@ export default function RootLayout() {
           <Stack.Screen name="camera-page" options={{ headerShown: false }} />
           <Stack.Screen name="quick-session" options={{ headerShown: false }} />
           <Stack.Screen name="voice-chat" options={{ headerShown: false }} />
-          <Stack.Screen name="text-chat" options={{ headerShown: false }} /> 
+          <Stack.Screen name="text-chat" options={{ headerShown: false }} />
+          <Stack.Screen name="chat" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" />
         </Stack>
         <StatusBar style="auto" />
