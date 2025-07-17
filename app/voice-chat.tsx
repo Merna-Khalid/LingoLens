@@ -1,12 +1,12 @@
-import { Audio } from 'expo-av'; // Still needed for Audio.setAudioModeAsync (global audio settings)
+// import { Audio } from 'expo-av';
+import { AudioRecorder, RecorderState, setAudioModeAsync, RecordingPresets, useAudioRecorder, useAudioRecorderState, AudioModule, useAudioPlayer } from "expo-audio";
 import * as FileSystem from 'expo-file-system'; // Import FileSystem for base64 conversion
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech'; // For text-to-speech
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Button, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const { width } = Dimensions.get('window');
 const API_KEY = ""; // Your Gemini API Key here (or leave empty for Canvas runtime)
 
 // Define chat message interface
@@ -25,13 +25,20 @@ const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
 export default function VoiceChatScreen() {
   const { photoUri: paramImageUri } = useLocalSearchParams();
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [recording, setRecording] = useState<Audio.Recording | undefined>(); // Changed type to Recording from expo-audio
-  const [isRecording, setIsRecording] = useState(false);
+  const [recording, setRecording] = useState<AudioRecorder | undefined>(); // Changed type to Recording from expo-audio
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5)); // For waveform visualization
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingStateRef = useRef<RecorderState>(null);
+
+
+
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  recordingStateRef.current = useAudioRecorderState(audioRecorder);
+  const [uri, setUri] = useState<string>('');
+  const audioPlayer = useAudioPlayer(uri);
 
   useEffect(() => {
     if (paramImageUri) {
@@ -52,8 +59,8 @@ export default function VoiceChatScreen() {
 
     // Request audio recording permission on mount
     (async () => {
-      const { status } = await Audio.requestPermissionsAsync(); // Still from expo-av for permissions
-      if (status !== 'granted') {
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
         console.error('Permission to access microphone is required!');
         // In a real app, you'd show a user-friendly message or redirect
       }
@@ -62,7 +69,8 @@ export default function VoiceChatScreen() {
     return () => {
       // Clean up recording if component unmounts while recording
       if (recording) {
-        recording.stopAndUnloadAsync();
+        // recording.stopAndUnloadAsync();
+        recording.stop();
       }
       if (waveformIntervalRef.current) {
         clearInterval(waveformIntervalRef.current);
@@ -84,17 +92,16 @@ export default function VoiceChatScreen() {
   // Start recording
   async function startRecording() {
     try {
-      setIsRecording(true);
-      await Audio.setAudioModeAsync({ // Still from expo-av for audio mode settings
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      // setIsRecording(true);
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
       // --- CORRECTED: Use new Recording() and prepare/start methods ---
-      const newRecording = new Audio.Recording();
-      await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await newRecording.startAsync();
-      setRecording(newRecording); // Set the new recording instance
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      setRecording(audioRecorder); // Set the new recording instance
       // --- END CORRECTED ---
 
       console.log('Recording started');
@@ -108,13 +115,13 @@ export default function VoiceChatScreen() {
 
     } catch (err) {
       console.error('Failed to start recording', err);
-      setIsRecording(false);
+      // setIsRecording(false);
     }
   }
 
   // Stop recording
   async function stopRecording() {
-    setIsRecording(false);
+    // setIsRecording(false);
     if (waveformIntervalRef.current) {
       clearInterval(waveformIntervalRef.current);
       waveformIntervalRef.current = null;
@@ -128,15 +135,18 @@ export default function VoiceChatScreen() {
 
     console.log('Stopping recording');
     try {
-      await recording.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ // Still from expo-av for audio mode settings
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await recording.stop();
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
       });
 
-      const uri = recording.getURI();
+      const uri = recording.uri;
       if (uri) {
         console.log('Recording stopped and stored at', uri);
+        setUri(uri);
+
+
         const newMessages: ChatMessage[] = [...messages, {
           id: Date.now().toString(),
           text: "Recording captured. Analyzing...", // Placeholder for actual transcription
@@ -229,8 +239,8 @@ export default function VoiceChatScreen() {
       let aiResponseText = "I'm sorry, I couldn't process that. Please try again.";
 
       if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
+        result.candidates[0].content && result.candidates[0].content.parts &&
+        result.candidates[0].content.parts.length > 0) {
         aiResponseText = result.candidates[0].content.parts[0].text;
       } else {
         console.error("Unexpected AI response structure:", result);
@@ -304,6 +314,12 @@ export default function VoiceChatScreen() {
           </View>
         )}
       </ScrollView>
+{uri && (
+        <Button
+          title="Play Recording"
+          onPress={() => audioPlayer.play()}
+        />
+      )}
 
       {/* Bottom Toolbar */}
       <View style={styles.toolbarContainer}>
@@ -320,9 +336,9 @@ export default function VoiceChatScreen() {
 
           <TouchableOpacity
             style={styles.recordButton}
-            onPress={isRecording ? stopRecording : startRecording}
+            onPress={recordingStateRef.current?.isRecording ? stopRecording : startRecording}
           >
-            {isRecording ? (
+            {recordingStateRef.current?.isRecording ? (
               <ActivityIndicator size="large" color="#fff" />
             ) : (
               <Text style={styles.recordButtonIcon}>●</Text>
