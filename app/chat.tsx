@@ -1,20 +1,19 @@
-import { Recording } from 'expo-audio'; // For audio recording instance
-import { Audio } from 'expo-av'; // Still needed for Audio.setAudioModeAsync (global audio settings)
-import * as FileSystem from 'expo-file-system'; // Import FileSystem for base64 conversion
+import { Recording } from 'expo-audio';
+import LingoproMultimodalModule from './modules/lingopro-multimodal-module';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { router, useLocalSearchParams } from 'expo-router';
-import * as Speech from 'expo-speech'; // For text-to-speech
+import * as Speech from 'expo-speech';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
-const API_KEY = ""; // Your Gemini API Key here (or leave empty for Canvas runtime)
 
-// Define chat message interface
 interface ChatMessage {
   id: string;
   text: string;
-  sender: 'user' | 'ai';
+  sender: 'user' | 'system';
   timestamp: string;
 }
 
@@ -25,7 +24,7 @@ const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
 
 type InputMode = 'text' | 'voice';
 
-export default function ChatScreen() { // Renamed to ChatScreen
+export default function ChatScreen() {
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<InputMode>(initialMode || 'text'); // Default to text
@@ -34,9 +33,10 @@ export default function ChatScreen() { // Renamed to ChatScreen
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [inputText, setInputText] = useState(''); // State for text input
-  const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5)); // For waveform visualization
+  const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const llamaServiceRef = useRef<LlamaService | null>(null);
 
   useEffect(() => {
     if (paramImageUri) {
@@ -46,7 +46,7 @@ export default function ChatScreen() { // Renamed to ChatScreen
         {
           id: 'ai-initial',
           text: "I can see the image. What would you like to discuss about it?",
-          sender: 'ai',
+          sender: 'system',
           timestamp: getTimestamp(),
         },
       ]);
@@ -64,18 +64,6 @@ export default function ChatScreen() { // Renamed to ChatScreen
       }
     })();
 
-    return () => {
-      // Clean up recording if component unmounts while recording
-      if (recording) {
-        recording.stopAndUnloadAsync();
-      }
-      if (waveformIntervalRef.current) {
-        clearInterval(waveformIntervalRef.current);
-      }
-      // Stop any ongoing speech when component unmounts
-      Speech.stop();
-    };
-  }, [paramImageUri]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -160,104 +148,7 @@ export default function ChatScreen() { // Renamed to ChatScreen
   }
 
   // Unified function to process messages (text or voice) and send to AI
-  const processMessageWithAI = async (input: string, mode: InputMode) => {
-    setAiThinking(true);
-    let userTextForAI: string = '';
 
-    if (mode === 'text') {
-      userTextForAI = input.trim();
-    } else { // mode === 'voice'
-      // In a real scenario, you'd send the audio file (input) to a transcription service here.
-      // For this example, we'll simulate transcription.
-      userTextForAI = "Can you describe the main elements you see in this image?";
-      // Update the "Recording captured. Analyzing..." message with the simulated transcript
-      setMessages(prevMessages => {
-        const lastMessage = prevMessages[prevMessages.length - 1];
-        if (lastMessage && lastMessage.text === "Recording captured. Analyzing...") {
-          return prevMessages.map((msg, index) =>
-            index === prevMessages.length - 1 ? { ...msg, text: userTextForAI } : msg
-          );
-        }
-        return prevMessages;
-      });
-    }
-
-    if (!userTextForAI) {
-      setAiThinking(false);
-      return; // Don't send empty requests to AI
-    }
-
-    try {
-      if (!imageUri) {
-        console.error("Image URI is missing for AI processing.");
-        setMessages(prevMessages => [...prevMessages, {
-          id: Date.now().toString(),
-          text: "Error: Image is missing for AI processing.",
-          sender: 'ai',
-          timestamp: getTimestamp(),
-        }]);
-        setAiThinking(false);
-        return;
-      }
-
-      const payload: any = {
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: userTextForAI },
-              {
-                inlineData: {
-                  mimeType: "image/jpeg", // Assuming JPEG, adjust if needed
-                  data: await FileSystem.readAsStringAsync(imageUri!, { encoding: FileSystem.EncodingType.Base64 })
-                }
-              }
-            ]
-          }
-        ],
-      };
-
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-      let aiResponseText = "I'm sorry, I couldn't process that. Please try again.";
-
-      if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
-        aiResponseText = result.candidates[0].content.parts[0].text;
-      } else {
-        console.error("Unexpected AI response structure:", result);
-      }
-
-      setMessages(prevMessages => [...prevMessages, {
-        id: (Date.now() + 1).toString(),
-        text: aiResponseText,
-        sender: 'ai',
-        timestamp: getTimestamp(),
-      }]);
-
-      if (mode === 'voice') { // Only speak AI response if initiated from voice mode
-        Speech.speak(aiResponseText, { language: 'en-US' });
-      }
-
-    } catch (error) {
-      console.error("Error calling AI:", error);
-      setMessages(prevMessages => [...prevMessages, {
-        id: Date.now().toString(),
-        text: "Error: Could not get a response from AI.",
-        sender: 'ai',
-        timestamp: getTimestamp(),
-      }]);
-    } finally {
-      setAiThinking(false);
-    }
-  };
 
   const handleSendText = () => {
     if (inputText.trim()) {
@@ -323,7 +214,7 @@ export default function ChatScreen() { // Renamed to ChatScreen
               ]}
             >
               <Text style={styles.messageText}>{message.text}</Text>
-              {message.sender === 'ai' && ( // Only show play button for AI messages
+              {message.sender === 'system' && ( // Only show play button for AI messages
                 <TouchableOpacity
                   style={styles.playButton}
                   onPress={() => playAiMessageAudio(message.text)}

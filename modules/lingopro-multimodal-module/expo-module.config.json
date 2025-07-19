@@ -1,0 +1,14 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["LingoproMultimodalModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.lingopromultimodalmodule.LingoproMultimodalModule"],
+    "dependencies": [
+      "androidx.core:core-ktx:1.12.0",
+      "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3",
+      "com.google.mediapipe:tasks-genai:0.11.0"
+    ]
+  }
+}
