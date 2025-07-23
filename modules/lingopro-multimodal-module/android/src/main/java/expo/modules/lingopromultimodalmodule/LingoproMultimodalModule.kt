@@ -1,219 +1,504 @@
 package expo.modules.lingopromultimodalmodule
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
 import android.util.Log
-import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import expo.modules.kotlin.Promise
 import java.io.File
-import java.io.FileInputStream
-import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.*
+import org.json.JSONObject
+import java.io.BufferedInputStream
 
+// Import LlmInferenceModel and InferenceListener from the same package
+import expo.modules.lingopromultimodalmodule.LlmInferenceModel
+import expo.modules.lingopromultimodalmodule.InferenceListener
 
-import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mediapipe.tasks.genai.llminference.GraphOptions
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
-import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
-import androidx.core.graphics.scale
+private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
+private const val DOWNLOAD_DIRECTORY = "llm_models"
 
-class LingoProMultimodalModule : Module() {
-  private val TAG = "LingoProMultimodal"
-  private var llmInference: LlmInference? = null
-  private var isInitialized = false
-  private var initializationError: String? = null
+class LingoproMultimodalModule : Module() {
+    private var nextHandle = 1
+    private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
 
-  private val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-    .setTemperature(0.1f)
-    .setTopK(5)
-    .setGraphOptions(
-      GraphOptions.builder()
-        .setEnableVisionModality(true)
-        // .setEnableAudioModality(true) // Uncomment if your .task model explicitly supports this in GraphOptions
-        .build()
-    )
-    .build()
-
-  override fun definition() = ModuleDefinition {
-    Name("LingoProMultimodal")
-
-    // Get the Android Context from the module's application context
-    val context: Context
-    get() = appContext.reactContext ?: throw IllegalStateException("React Context is null")
-
-    // Lifecycle event to initialize model when module is created
-    onCreate {
-      Log.d(TAG, "LingoProMultimodalModule created.")
-    }
-
-    // Lifecycle event to release model resources when module is destroyed
-    onDestroy {
-      Log.d(TAG, "LingoProMultimodalModule destroyed.")
-      shutdown()
-    }
-
-    // Method to load the MediaPipe .task file
-    Function("loadModel") { modelPath: String, promise: Promise ->
-      launch {
-        withContext(Dispatchers.IO) {
-          try {
-            Log.d(TAG, "Attempting to load MediaPipe model from: $modelPath")
-
-            // Shutdown any existing model before loading a new one
-            shutdown()
-
-            val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
-
-            // Check if the model is in assets or a regular file system path
-            if (modelPath.startsWith("file:///android_asset/")) {
-              val assetFileName = modelPath.removePrefix("file:///android_asset/")
-              optionsBuilder.setModelAssetPath(assetFileName)
-              Log.d(TAG, "Loading model from assets: $assetFileName")
-            } else {
-              val modelFile = File(modelPath)
-              if (modelFile.exists()) {
-                optionsBuilder.setModelPath(modelFile.absolutePath) // Use setModelPath for direct file paths
-                Log.d(TAG, "Loading model from file system: ${modelFile.absolutePath}")
-              } else {
-                throw IOException("Model file not found at: $modelPath")
-              }
+    // Define these functions at class level, not in the definition block
+    private fun createInferenceListener(modelHandle: Int): InferenceListener {
+        return object : InferenceListener {
+            override fun logging(model: LlmInferenceModel, message: String) {
+                sendEvent("logging", mapOf(
+                    "handle" to modelHandle,
+                    "message" to message
+                ))
             }
 
-            // Set maxNumImages if your model supports it and you expect multiple images
-            optionsBuilder.setMaxNumImages(1) // Assuming one image per query for now
+            override fun onError(model: LlmInferenceModel, requestId: Int, error: String) {
+                sendEvent("onErrorResponse", mapOf(
+                    "handle" to modelHandle,
+                    "requestId" to requestId,
+                    "error" to error
+                ))
+            }
 
-            llmInference = LlmInference.createFromOptions(context, optionsBuilder.build())
-            isInitialized = true
-            Log.d(TAG, "MediaPipe LLM model initialized successfully.")
-            promise.resolve(true)
-          } catch (e: Exception) {
-            isInitialized = false
-            initializationError = e.message
-            Log.e(TAG, "Failed to load MediaPipe LLM model: ${e.message}", e)
-            promise.reject("MODEL_LOAD_FAILED", "Failed to load MediaPipe LLM model: ${e.message}", e)
-          }
+            override fun onResults(model: LlmInferenceModel, requestId: Int, response: String) {
+                sendEvent("onPartialResponse", mapOf(
+                    "handle" to modelHandle,
+                    "requestId" to requestId,
+                    "response" to response
+                ))
+            }
         }
-      }
     }
 
-    // Main method to process multimodal input
-    Function("processMultimodalInput") {
-        textInput: String?,
-        imageUri: String?,
-        audioUri: String?,
-        promise: Promise ->
-      launch {
-        withContext(Dispatchers.Default) { // Use Dispatchers.Default for CPU-bound tasks like image scaling
-          if (!isInitialized || llmInference == null) {
-            val errorMsg = "MediaPipe LLM model not initialized. Error: $initializationError"
-            Log.e(TAG, errorMsg)
-            promise.reject("MODEL_NOT_LOADED", errorMsg)
-            return@withContext
-          }
+    private fun copyFileToInternalStorageIfNeeded(modelName: String, context: Context): File {
+        val outputFile = File(context.filesDir, modelName)
 
-          // Prepare image input
-          var mpImage: com.google.mediapipe.framework.image.MPImage? = null
-          if (imageUri != null) {
-            try {
-              val uri = Uri.parse(imageUri)
-              context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                var bitmap = BitmapFactory.decodeStream(inputStream)
-                Log.d(TAG, "Original image loaded: ${bitmap.width}x${bitmap.height}")
+        // Check if the file already exists
+        if (outputFile.exists()) {
+            // The file already exists, no need to copy again
+            sendEvent("logging", mapOf(
+                "message" to "File already exists: ${outputFile.path}, size: ${outputFile.length()}"
+            ))
+            return outputFile
+        }
 
-                // Optimize image processing - resize bitmap to reduce processing time
-                // Most vision models don't need full resolution images
-                val resizedBitmap = if (bitmap.width > 512 || bitmap.height > 512) {
-                  val scaleFactor = 512f / bitmap.width.coerceAtLeast(bitmap.height)
-                  bitmap.scale(
-                    (bitmap.width * scaleFactor).toInt(),
-                    (bitmap.height * scaleFactor).toInt()
-                  )
-                } else {
-                  bitmap
+        try {
+            val assetList = context.assets.list("") ?: arrayOf()
+            sendEvent("logging", mapOf(
+                "message" to "Available assets: ${assetList.joinToString()}"
+            ))
+
+            if (!assetList.contains(modelName)) {
+                val errorMsg = "Asset file $modelName does not exist in assets"
+                sendEvent("logging", mapOf("message" to errorMsg))
+                throw IllegalArgumentException(errorMsg)
+            }
+
+            sendEvent("logging", mapOf(
+                "message" to "Copying asset $modelName to ${outputFile.path}"
+            ))
+
+            // File doesn't exist, proceed with copying
+            context.assets.open(modelName).use { inputStream ->
+                FileOutputStream(outputFile).use { outputStream ->
+                    val buffer = ByteArray(1024)
+                    var read: Int
+                    var total = 0
+
+                    while (inputStream.read(buffer).also { read = it } != -1) {
+                        outputStream.write(buffer, 0, read)
+                        total += read
+
+                        if (total % (1024 * 1024) == 0) { // Log every MB
+                            sendEvent("logging", mapOf(
+                                "message" to "Copied $total bytes so far"
+                            ))
+                        }
+                    }
+
+                    sendEvent("logging", mapOf(
+                        "message" to "Copied $total bytes total"
+                    ))
                 }
-                Log.d(TAG, "Resized image to: ${resizedBitmap.width}x${resizedBitmap.height}")
-                mpImage = BitmapImageBuilder(resizedBitmap).build()
-              }
-            } catch (e: IOException) {
-              Log.e(TAG, "Failed to load or process image from URI: $imageUri", e)
-              promise.reject("IMAGE_PROCESSING_FAILED", "Failed to process image: ${e.message}", e)
-              return@withContext
             }
-          }
-
-          // Prepare audio input (ByteBuffer)
-          var audioByteBuffer: ByteBuffer? = null
-          if (audioUri != null) {
-            try {
-              val uri = Uri.parse(audioUri)
-              val parcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
-              parcelFileDescriptor?.use { pfd ->
-                val fileChannel = FileInputStream(pfd.fileDescriptor).channel
-                audioByteBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size())
-                Log.d(TAG, "Audio loaded successfully, size: ${audioByteBuffer?.capacity()} bytes")
-              }
-            } catch (e: IOException) {
-              Log.e(TAG, "Failed to load audio from URI: $audioUri", e)
-              promise.reject("AUDIO_PROCESSING_FAILED", "Failed to load audio: ${e.message}", e)
-              return@withContext
-            }
-          }
-
-          // Run inference using LlmInferenceSession
-          try {
-            Log.d(TAG, "Starting LLM inference with session...")
-            val startTime = System.currentTimeMillis()
-
-            // Create a new session for each query chunk, as per MediaPipe examples
-            val result = LlmInferenceSession.createFromOptions(llmInference!!, sessionOptions).use { session ->
-              if (textInput != null) {
-                session.addQueryChunk(textInput)
-                Log.d(TAG, "Added text chunk: '$textInput'")
-              }
-              if (mpImage != null) {
-                session.addImage(mpImage!!)
-                Log.d(TAG, "Added image to session.")
-              }
-              // IMPORTANT: Direct raw audio input to LlmInferenceSession for generative models
-              // is not explicitly shown in common MediaPipe examples for .task files.
-              // If your .task model supports raw audio input directly, you might need a
-              // specific `session.addAudio(audioByteBuffer)` or similar method.
-              // Otherwise, audio might need to be transcribed to text first, then sent as textInput.
-              if (audioByteBuffer != null) {
-                Log.d(TAG, "Audio ByteBuffer prepared. Note: Direct raw audio input to LlmInferenceSession for generative models might require specific .task model support or pre-processing.")
-                // Example if a direct audio method existed:
-                // session.addAudio(audioByteBuffer!!)
-              }
-
-              session.generateResponse()
-            }
-
-            val endTime = System.currentTimeMillis()
-            Log.d(TAG, "LLM inference completed in ${endTime - startTime}ms. Response: ${result}")
-
-            promise.resolve(result) // Resolve with the generated text response
-          } catch (e: Exception) {
-            Log.e(TAG, "Error during LLM inference: ${e.message}", e)
-            promise.reject("INFERENCE_FAILED", "Error during LLM inference: ${e.message}", e)
-          }
+        } catch (e: Exception) {
+            sendEvent("logging", mapOf(
+                "message" to "Error copying file: ${e.message}"
+            ))
+            throw e
         }
-      }
+
+        return outputFile
     }
 
-    // Shutdown method to release resources
-    // This is called when the module is destroyed or when loading a new model.
-    fun shutdown() {
-      llmInference?.close()
-      llmInference = null
-      isInitialized = false
-      initializationError = null
-      Log.d(TAG, "MediaPipe LLM resources shut down.")
+    // Model directory management
+    private fun getModelDirectory(): File {
+        val modelDir = File(appContext.reactContext!!.filesDir, DOWNLOAD_DIRECTORY)
+        if (!modelDir.exists()) {
+            modelDir.mkdirs()
+        }
+        return modelDir
     }
-  }
+
+    private fun getModelFile(modelName: String): File {
+        return File(getModelDirectory(), modelName)
+    }
+
+    // Create model internal helper method
+    private fun createModelInternal(modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean): Int {
+        val modelHandle = nextHandle++
+        val model = LlmInferenceModel(
+            appContext.reactContext!!,
+            modelPath,
+            maxTokens,
+            topK,
+            temperature.toFloat(),
+            randomSeed,
+            multiModal,
+            inferenceListener = createInferenceListener(modelHandle)
+        )
+        modelMap[modelHandle] = model
+        return modelHandle
+    }
+
+    // Track active downloads
+    private val activeDownloads = mutableMapOf<String, Job>()
+
+    override fun definition() = ModuleDefinition {
+        Name("LingoproMultimodal") // Corrected native module name to LingoproMultimodal
+
+        Constants(
+            "PI" to Math.PI
+        )
+
+        Events("onChange", "onPartialResponse", "onErrorResponse", "logging", "downloadProgress")
+
+        Function("hello") {
+            "Hello world from Lingopro Multimodal! 👋" // Updated message
+        }
+
+        AsyncFunction("createModel") { modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
+            try {
+                val modelHandle = nextHandle++
+
+                // Log that we're creating a model
+                sendEvent("logging", mapOf(
+                    "handle" to modelHandle,
+                    "message" to "Creating model from path: $modelPath"
+                ))
+
+                val model = LlmInferenceModel(
+                    appContext.reactContext!!,
+                    modelPath,
+                    maxTokens,
+                    topK,
+                    temperature.toFloat(),
+                    randomSeed,
+                    multiModal,
+                    inferenceListener = createInferenceListener(modelHandle)
+                )
+                modelMap[modelHandle] = model
+                promise.resolve(modelHandle)
+            } catch (e: Exception) {
+                // Log the error
+                sendEvent("logging", mapOf(
+                    "message" to "Model creation failed: ${e.message}"
+                ))
+                promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+            }
+        }
+
+        AsyncFunction("createModelFromAsset") { modelName: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
+            try {
+                // Log that we're creating a model from asset
+                sendEvent("logging", mapOf(
+                    "message" to "Creating model from asset: $modelName"
+                ))
+
+                val modelPath = copyFileToInternalStorageIfNeeded(modelName, appContext.reactContext!!).path
+
+                sendEvent("logging", mapOf(
+                    "message" to "Model file copied to: $modelPath"
+                ))
+
+                val modelHandle = nextHandle++
+                val model = LlmInferenceModel(
+                    appContext.reactContext!!,
+                    modelPath,
+                    maxTokens,
+                    topK,
+                    temperature.toFloat(),
+                    randomSeed,
+                    multiModal,
+                    inferenceListener = createInferenceListener(modelHandle)
+                )
+                modelMap[modelHandle] = model
+                promise.resolve(modelHandle)
+            } catch (e: Exception) {
+                // Log the error
+                sendEvent("logging", mapOf(
+                    "message" to "Model creation from asset failed: ${e.message}"
+                ))
+                promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+            }
+        }
+
+        AsyncFunction("releaseModel") { handle: Int, promise: Promise ->
+            try {
+                val removed = modelMap.remove(handle) != null
+                if (removed) {
+                    promise.resolve(true)
+                } else {
+                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                }
+            } catch (e: Exception) {
+                promise.reject("RELEASE_FAILED", e.message ?: "Unknown error", e)
+            }
+        }
+
+        AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
+            try {
+                val model = modelMap[handle]
+                if (model == null) {
+                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                    return@AsyncFunction
+                }
+
+                sendEvent("logging", mapOf(
+                    "handle" to handle,
+                    "message" to "Generating response with prompt: ${prompt.take(30)}..."
+                ))
+
+                // Use the synchronous version
+                val response = model.generateResponse(requestId, prompt, imagePath)
+                promise.resolve(response)
+            } catch (e: Exception) {
+                sendEvent("logging", mapOf(
+                    "handle" to handle,
+                    "message" to "Generation error: ${e.message}"
+                ))
+                promise.reject("GENERATION_FAILED", e.message ?: "Unknown error", e)
+            }
+        }
+
+        AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
+            try {
+                val model = modelMap[handle]
+                if (model == null) {
+                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                    return@AsyncFunction
+                }
+
+                sendEvent("logging", mapOf(
+                    "handle" to handle,
+                    "requestId" to requestId,
+                    "message" to "Starting async generation with prompt: ${prompt.take(30)}..."
+                ))
+
+                // Use the async version with callback and event emission
+                try {
+                    model.generateResponseAsync(requestId, prompt, imagePath) { result ->
+                        try {
+                            if (result.isEmpty()) {
+                                sendEvent("logging", mapOf(
+                                    "handle" to handle,
+                                    "requestId" to requestId,
+                                    "message" to "Generation completed but returned empty result"
+                                ))
+                                promise.reject("GENERATION_FAILED", "Failed to generate response", null)
+                            } else {
+                                sendEvent("logging", mapOf(
+                                    "handle" to handle,
+                                    "requestId" to requestId,
+                                    "message" to "Generation completed successfully with ${result.length} characters"
+                                ))
+
+                                // We don't resolve with the final result here anymore
+                                // The client will assemble the full response from streaming events
+                                promise.resolve(true)  // Just send success signal
+                            }
+                        } catch (e: Exception) {
+                            sendEvent("logging", mapOf(
+                                "handle" to handle,
+                                "requestId" to requestId,
+                                "message" to "Error in async result callback: ${e.message}"
+                            ))
+                            // Only reject if not already settled
+                            promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    sendEvent("logging", mapOf(
+                        "handle" to handle,
+                        "requestId" to requestId,
+                        "message" to "Exception during generateResponseAsync call: ${e.message}"
+                    ))
+                    promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                }
+            } catch (e: Exception) {
+                sendEvent("logging", mapOf(
+                    "handle" to handle,
+                    "message" to "Outer exception in generateResponseAsync: ${e.message}"
+                ))
+                promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+            }
+        }
+
+        // Check if model is downloaded
+        AsyncFunction("isModelDownloaded") { modelName: String, promise: Promise ->
+            val modelFile = getModelFile(modelName)
+            promise.resolve(modelFile.exists() && modelFile.length() > 0)
+        }
+
+        // Get list of downloaded models
+        AsyncFunction("getDownloadedModels") { promise: Promise ->
+            val models = getModelDirectory().listFiles()?.map { it.name } ?: emptyList()
+            promise.resolve(models)
+        }
+
+        // Delete downloaded model
+        AsyncFunction("deleteDownloadedModel") { modelName: String, promise: Promise ->
+            val modelFile = getModelFile(modelName)
+            val result = if (modelFile.exists()) modelFile.delete() else false
+            promise.resolve(result)
+        }
+
+        // Download model from URL
+        AsyncFunction("downloadModel") { url: String, modelName: String, options: Map<String, Any>?, promise: Promise ->
+            val modelFile = getModelFile(modelName)
+            val overwrite = (options?.get("overwrite") as? Boolean) ?: false
+
+            // Check if already downloading
+            if (activeDownloads.containsKey(modelName)) {
+                promise.reject("ERR_ALREADY_DOWNLOADING", "This model is already being downloaded", null)
+                return@AsyncFunction
+            }
+
+            // Check if already exists
+            if (modelFile.exists() && !overwrite) {
+                promise.resolve(true)
+                return@AsyncFunction
+            }
+
+            // Start download in coroutine
+            val downloadJob = CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val connection = URL(url).openConnection() as HttpURLConnection
+
+                    // Add custom headers if provided
+                    (options?.get("headers") as? Map<String, Any>)?.let { headers ->
+                        headers.forEach { (key, value) ->
+                            connection.setRequestProperty(key, value.toString())
+                        }
+                    }
+
+                    connection.connectTimeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000
+                    connection.connect()
+
+                    val contentLength = connection.contentLength.toLong()
+                    val input = BufferedInputStream(connection.inputStream)
+                    val tempFile = File(modelFile.absolutePath + ".temp")
+                    val output = FileOutputStream(tempFile)
+
+                    val buffer = ByteArray(8192)
+                    var total: Long = 0
+                    var count: Int
+                    var lastUpdateTime = System.currentTimeMillis()
+
+                    while (input.read(buffer).also { count = it } != -1) {
+                        if (isActive.not()) {
+                            // Download was cancelled
+                            output.close()
+                            input.close()
+                            tempFile.delete()
+                            sendEvent("downloadProgress", mapOf(
+                                "modelName" to modelName,
+                                "url" to url,
+                                "status" to "cancelled"
+                            ))
+                            return@launch
+                        }
+
+                        total += count
+                        output.write(buffer, 0, count)
+
+                        // Send progress updates, throttled to avoid too many events
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastUpdateTime > 100) { // Every 100ms
+                            lastUpdateTime = currentTime
+                            val progress = if (contentLength > 0) total.toDouble() / contentLength.toDouble() else 0.0
+                            sendEvent("downloadProgress", mapOf(
+                                "modelName" to modelName,
+                                "url" to url,
+                                "bytesDownloaded" to total,
+                                "totalBytes" to contentLength,
+                                "progress" to progress,
+                                "status" to "downloading"
+                            ))
+                        }
+                    }
+
+                    // Close streams
+                    output.flush()
+                    output.close()
+                    input.close()
+
+                    // Rename temp file to final file
+                    if (modelFile.exists()) {
+                        modelFile.delete()
+                    }
+                    tempFile.renameTo(modelFile)
+
+                    // Notify completion
+                    sendEvent("downloadProgress", mapOf(
+                        "modelName" to modelName,
+                        "url" to url,
+                        "bytesDownloaded" to modelFile.length(),
+                        "totalBytes" to modelFile.length(),
+                        "progress" to 1.0,
+                        "status" to "completed"
+                    ))
+
+                    withContext(Dispatchers.Main) {
+                        promise.resolve(true)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error downloading model: ${e.message}", e)
+                    sendEvent("downloadProgress", mapOf(
+                        "modelName" to modelName,
+                        "url" to url,
+                        "status" to "error",
+                        "error" to (e.message ?: "Unknown error")
+                    ))
+                    withContext(Dispatchers.Main) {
+                        promise.reject("ERR_DOWNLOAD", "Failed to download model: ${e.message}", e)
+                    }
+                } finally {
+                    activeDownloads.remove(modelName)
+                }
+            }
+
+            activeDownloads[modelName] = downloadJob
+        }
+
+        // Cancel download
+        AsyncFunction("cancelDownload") { modelName: String, promise: Promise ->
+            val job = activeDownloads[modelName]
+            if (job != null) {
+                job.cancel()
+                activeDownloads.remove(modelName)
+                promise.resolve(true)
+            } else {
+                promise.resolve(false)
+            }
+        }
+
+        // Create model from downloaded file
+        AsyncFunction("createModelFromDownloaded") { modelName: String, maxTokens: Int?, topK: Int?, temperature: Double?, randomSeed: Int?, multiModal: Boolean?, promise: Promise ->
+            val modelFile = getModelFile(modelName)
+
+            if (!modelFile.exists()) {
+                promise.reject("ERR_MODEL_NOT_FOUND", "Model $modelName is not downloaded", null)
+                return@AsyncFunction
+            }
+
+            try {
+                val handle = createModelInternal(
+                    modelFile.absolutePath,
+                    maxTokens ?: 1024,
+                    topK ?: 40,
+                    temperature ?: 0.7,
+                    randomSeed ?: 42,
+                    multiModal ?: false
+                )
+                // Explicitly cast to avoid ambiguity
+                promise.resolve(handle as Int)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating model from downloaded file: ${e.message}", e)
+                promise.reject("ERR_CREATE_MODEL", "Failed to create model: ${e.message}", e)
+            }
+        }
+    }
 }

@@ -1,6 +1,9 @@
 {
   "expo": {
     "name": "LingoLensAlpha",
+    "assetBundlePatterns": [
+      "assets/gemma-3n-E2B-it-int4.task"
+    ],
     "slug": "LingoLensAlpha",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,7 +12,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.LingoLensAlpha"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,9 +25,7 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.READ_EXTERNAL_STORAGE"
       ],
       "package": "com.anonymous.LingoLensAlpha"
     },

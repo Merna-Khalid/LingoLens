@@ -1,7 +1,8 @@
 import { Link, router } from 'expo-router';
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native'; // Import Alert for user feedback
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 
 interface LanguageCardProps {
   flag: string;
@@ -26,8 +27,8 @@ export default function SelectLanguageScreen() {
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
 
   const languages = [
-    { id: 'spanish', flag: '�🇸', language: 'Spanish', nativeLanguage: 'Español' },
-    { id: 'french', flag: '🇫🇷', language: 'French', nativeLanguage: 'Français' },
+    { id: 'spanish', flag: '🇪🇸', language: 'Spanish', nativeLanguage: 'Español' },
+    { id: 'french', flag: '�🇷', language: 'French', nativeLanguage: 'Français' },
     { id: 'german', flag: '🇩🇪', language: 'German', nativeLanguage: 'Deutsch' },
     { id: 'italian', flag: '🇮🇹', language: 'Italian', nativeLanguage: 'Italiano' },
     { id: 'japanese', flag: '🇯🇵', language: 'Japanese', nativeLanguage: '日本語' },
@@ -36,13 +37,17 @@ export default function SelectLanguageScreen() {
 
   const handleProceed = () => {
     if (selectedLanguage) {
-      // Navigate to the new page, passing the selected language as a parameter
-      router.push({
-        pathname: "/select-language-level",
-        params: { selectedLanguage: selectedLanguage }
-      });
+      try {
+        router.push({
+          pathname: "/select-language-level",
+          params: { selectedLanguage: selectedLanguage }
+        });
+      } catch (error) {
+        console.error("Error saving language to cache:", error);
+        Alert.alert("Error", "Could not save your language choice. Please try again.");
+      }
     } else {
-
+      Alert.alert("Selection Required", "Please select a language before proceeding.");
       console.log("Please select a language before proceeding.");
     }
   };
@@ -94,24 +99,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 40, // Adjust padding for overall layout
+    paddingVertical: 20,
   },
   languageSelectionSection: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 30,
+    marginBottom: 20,
   },
   selectLanguageHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 30,
   },
   backButton: {
     padding: 10,
@@ -122,9 +119,10 @@ const styles = StyleSheet.create({
     color: '#555',
   },
   selectLanguageTitle: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#333',
+    flex: 1, // Allows title to take up remaining space
   },
   languageGrid: {
     flexDirection: 'row',
@@ -132,55 +130,56 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   languageCard: {
-    width: '48%', // Roughly half width for two columns with some spacing
-    backgroundColor: '#f8f8f8',
-    padding: 15,
-    borderRadius: 10,
+    width: '48%', // Roughly half width for two columns, adjust as needed
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    alignItems: 'center',
     marginBottom: 15,
-    alignItems: 'flex-start', // Align content to the left within the card
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-    borderWidth: 2, // Default border
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 2,
     borderColor: 'transparent', // Default transparent border
   },
   languageCardSelected: {
     borderColor: '#007AFF', // Highlight color when selected
-    backgroundColor: '#e6f0ff', // Lighter blue background when selected
   },
   flagEmoji: {
-    fontSize: 30,
-    marginBottom: 5,
+    fontSize: 50,
+    marginBottom: 10,
   },
   languageText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
+    marginBottom: 5,
   },
   nativeLanguageText: {
     fontSize: 14,
     color: '#777',
   },
   proceedButton: {
-    backgroundColor: '#007AFF', // A nice blue color
+    backgroundColor: '#007AFF',
     paddingVertical: 18,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 20, // Space from the bottom of the screen
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    marginTop: 20,
+    marginBottom: 20, // Add some bottom margin
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
     elevation: 5,
   },
   proceedButtonDisabled: {
-    backgroundColor: '#a0c8ff', // Lighter blue when disabled
+    backgroundColor: '#A0C8FF', // Lighter color for disabled state
   },
   proceedButtonText: {
+    color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#fff',
   },
 });

@@ -3,6 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const SELECTED_LANGUAGE_KEY = 'selected_language';
+const SELECTED_LEVEL_KEY = 'selected_level';
 
 interface LevelCardProps {
   level: string;
@@ -38,11 +40,12 @@ export default function SelectLanguageLevelScreen() {
     { id: 'advanced', level: 'Advanced', description: "I can communicate fluently" },
   ];
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (selectedLanguage && selectedLevel) {
       console.log(`Selected Language: ${selectedLanguage}, Selected Level: ${selectedLevel}`);
-      // Example: router.push('/next-screen', { language: selectedLanguage, level: selectedLevel });
-      // For now, we'll just log.
+      await AsyncStorage.setItem(SELECTED_LANGUAGE_KEY, selectedLanguage);
+      await AsyncStorage.setItem(SELECTED_LEVEL_KEY, selectedLevel);
+
       router.push({
         pathname: '/main-page', 
         params: { selectedLanguage: selectedLanguage, selectedLevel: selectedLevel }

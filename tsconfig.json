@@ -5,7 +5,14 @@
     "paths": {
       "@/*": [
         "./*"
-      ]
+      ],
+      "@services/*": ["services/*"],
+      "@utils/*": ["utils/*"]
+    }
+  },
+  "expo": {
+    "experiments": {
+      "tsconfigPaths": true
     }
   },
   "include": [

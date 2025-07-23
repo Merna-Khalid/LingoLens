@@ -24,13 +24,12 @@ export default function RootLayout() {
       <>
         <Stack>
           <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="initial-page" options={{ headerShown: false }} />
           <Stack.Screen name="select-languages" options={{ headerShown: false }} />
           <Stack.Screen name="select-language-level" options={{ headerShown: false }} />
           <Stack.Screen name="main-page" options={{ headerShown: false }} />
           <Stack.Screen name="camera-page" options={{ headerShown: false }} />
           <Stack.Screen name="quick-session" options={{ headerShown: false }} />
-          <Stack.Screen name="voice-chat" options={{ headerShown: false }} />
-          <Stack.Screen name="text-chat" options={{ headerShown: false }} />
           <Stack.Screen name="chat" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" />
         </Stack>

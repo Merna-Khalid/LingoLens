@@ -1,14 +1,17 @@
-import { Recording } from 'expo-audio';
-import LingoproMultimodalModule from './modules/lingopro-multimodal-module';
-import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
-import { router, useLocalSearchParams } from 'expo-router';
-import * as Speech from 'expo-speech';
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, Image, TextInput, Dimensions, Platform, KeyboardAvoidingView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, useLocalSearchParams } from 'expo-router';
+import { Audio } from 'expo-av';
+import { Recording } from 'expo-audio';
+import * as Speech from 'expo-speech';
+import * as FileSystem from 'expo-file-system';
+import { requireNativeModule } from 'expo-modules-core';
+
+const LingoProMultimodal = requireNativeModule('LingoproMultimodal');
 
 const { width } = Dimensions.get('window');
+
 
 interface ChatMessage {
   id: string;
@@ -19,29 +22,61 @@ interface ChatMessage {
 
 // Waveform bar component
 const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
-  <View style={[styles.waveformBar, { height: Math.max(5, height) }]} /> // Min height to always be visible
+  <View style={[styles.waveformBar, { height: Math.max(5, height) }]} />
 );
 
 type InputMode = 'text' | 'voice';
 
 export default function ChatScreen() {
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
+
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [currentMode, setCurrentMode] = useState<InputMode>(initialMode || 'text'); // Default to text
+  const [currentMode, setCurrentMode] = useState<InputMode>(initialMode || 'text');
   const [recording, setRecording] = useState<Recording | undefined>();
   const [isRecording, setIsRecording] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
-  const [inputText, setInputText] = useState(''); // State for text input
+  const [inputText, setInputText] = useState('');
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const llamaServiceRef = useRef<LlamaService | null>(null);
+
+  const [isModelReady, setIsModelReady] = useState(false);
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+
+  // Function to get current timestamp
+  const getTimestamp = () => {
+    const now = new Date();
+    return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const checkModelStatus = useCallback(async () => {
+    try {
+      const loaded = await LingoProMultimodal.isModelLoaded();
+      setIsModelReady(loaded);
+      if (!loaded) {
+        setModelLoadError("AI model not loaded. Please go back to setup and load the model.");
+        Alert.alert(
+          "Model Not Loaded",
+          "The AI model is not loaded. Please go back to the initial setup screen to load or download the model.",
+          [{ text: "OK", onPress: () => router.replace('/') }] // Go back to initial page
+        );
+      }
+    } catch (error: any) {
+      console.error("Error checking model status:", error);
+      setIsModelReady(false);
+      setModelLoadError(`Failed to check model status: ${error.message}`);
+      Alert.alert(
+        "Model Error",
+        `Failed to check model status: ${error.message}. Please restart the app.`,
+        [{ text: "OK", onPress: () => router.replace('/') }]
+      );
+    }
+  }, []);
 
   useEffect(() => {
     if (paramImageUri) {
       setImageUri(paramImageUri as string);
-      // Add initial AI message when the page loads with an image
       setMessages([
         {
           id: 'ai-initial',
@@ -55,29 +90,36 @@ export default function ChatScreen() {
       router.replace('/main-page');
     }
 
-    // Request audio recording permission on mount
     (async () => {
-      const { status } = await Audio.requestPermissionsAsync(); // Still from expo-av for permissions
+      const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        console.error('Permission to access microphone is required!');
-        // In a real app, you'd show a user-friendly message or redirect
+        Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
       }
     })();
 
+    checkModelStatus();
 
-  // Scroll to bottom when messages change
+    return () => {
+      if (recording) {
+        recording.stopAndUnloadAsync();
+      }
+      if (waveformIntervalRef.current) {
+        clearInterval(waveformIntervalRef.current);
+      }
+      Speech.stop();
+    };
+  }, [paramImageUri, checkModelStatus]);
+
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
 
-  // Function to get current timestamp
-  const getTimestamp = () => {
-    const now = new Date();
-    return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  // Start recording
+  // --- Audio Recording Functions ---
   async function startRecording() {
+    if (!isModelReady) {
+      Alert.alert('AI Not Ready', 'The AI model is not loaded. Please load it first.');
+      return;
+    }
     try {
       setIsRecording(true);
       await Audio.setAudioModeAsync({
@@ -91,7 +133,6 @@ export default function ChatScreen() {
       setRecording(newRecording);
       console.log('Recording started');
 
-      // Start waveform simulation
       waveformIntervalRef.current = setInterval(() => {
         setWaveformHeights(prevHeights =>
           prevHeights.map(() => Math.floor(Math.random() * 50) + 5)
@@ -101,16 +142,16 @@ export default function ChatScreen() {
     } catch (err) {
       console.error('Failed to start recording', err);
       setIsRecording(false);
+      Alert.alert('Recording Error', 'Failed to start recording. Please check microphone permissions.');
     }
   }
 
-  // Stop recording
   async function stopRecording() {
     setIsRecording(false);
     if (waveformIntervalRef.current) {
       clearInterval(waveformIntervalRef.current);
       waveformIntervalRef.current = null;
-      setWaveformHeights(Array(20).fill(5)); // Reset waveform
+      setWaveformHeights(Array(20).fill(5));
     }
 
     if (!recording) {
@@ -131,24 +172,82 @@ export default function ChatScreen() {
         console.log('Recording stopped and stored at', uri);
         const userMessage: ChatMessage = {
           id: Date.now().toString(),
-          text: "Recording captured. Analyzing...", // Placeholder for actual transcription
+          text: "Recording captured. Analyzing...",
           sender: 'user',
           timestamp: getTimestamp(),
         };
         setMessages(prevMessages => [...prevMessages, userMessage]);
-        processMessageWithAI(uri, 'voice'); // Process as voice input
+        processMessageWithAI(userMessage.text, uri, 'voice');
       } else {
         console.error('Recording URI is null.');
+        Alert.alert('Recording Error', 'Could not get recorded audio. Please try again.');
       }
     } catch (err) {
       console.error('Failed to stop recording', err);
+      Alert.alert('Recording Error', 'Failed to stop recording.');
     } finally {
       setRecording(undefined);
     }
   }
 
-  // Unified function to process messages (text or voice) and send to AI
+  // --- AI Message Processing ---
+  const processMessageWithAI = async (textInput: string, audioUri: string | null, mode: InputMode) => {
+    if (!isModelReady) {
+      Alert.alert('AI Not Ready', 'The AI model is not loaded. Please load it first.');
+      return;
+    }
 
+    setAiThinking(true);
+
+    // Update the "Analyzing..." message for voice input
+    if (mode === 'voice' && textInput === "Recording captured. Analyzing...") {
+      setMessages(prevMessages => {
+        const lastMessage = prevMessages[prevMessages.length - 1];
+        if (lastMessage && lastMessage.text === "Recording captured. Analyzing...") {
+          return prevMessages.map((msg, index) =>
+            index === prevMessages.length - 1 ? { ...msg, text: "User spoke: (audio input)" } : msg
+          );
+        }
+        return prevMessages;
+      });
+    }
+
+    try {
+      if (!imageUri) {
+        throw new Error("Image URI is missing for AI processing.");
+      }
+
+      console.log("Calling native module with:", { textInput, imageUri, audioUri });
+      const aiResponseText: string = await LingoProMultimodal.processMultimodalInput(
+        textInput,
+        imageUri,
+        audioUri
+      );
+      console.log("MediaPipe AI response:", aiResponseText);
+
+      setMessages(prevMessages => [...prevMessages, {
+        id: (Date.now() + 1).toString(),
+        text: aiResponseText,
+        sender: 'system',
+        timestamp: getTimestamp(),
+      }]);
+
+      if (mode === 'voice') {
+        Speech.speak(aiResponseText, { language: 'en-US' });
+      }
+
+    } catch (error: any) {
+      console.error("Error calling MediaPipe AI:", error);
+      setMessages(prevMessages => [...prevMessages, {
+        id: Date.now().toString(),
+        text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
+        sender: 'system',
+        timestamp: getTimestamp()
+      }]);
+    } finally {
+      setAiThinking(false);
+    }
+  };
 
   const handleSendText = () => {
     if (inputText.trim()) {
@@ -160,19 +259,18 @@ export default function ChatScreen() {
       };
       setMessages(prevMessages => [...prevMessages, userMessage]);
       setInputText('');
-      processMessageWithAI(userMessage.text, 'text'); // Process as text input
+      processMessageWithAI(userMessage.text, null, 'text');
     }
   };
 
-  // New function to play AI message audio
+  // Function to play AI message audio
   const playAiMessageAudio = (textToSpeak: string) => {
     Speech.speak(textToSpeak, { language: 'en-US' });
   };
 
   const toggleInputMode = () => {
-    // If recording, stop it before switching mode
     if (isRecording) {
-      stopRecording();
+      stopRecording(); // Stop recording before switching mode
     }
     setCurrentMode(prevMode => (prevMode === 'text' ? 'voice' : 'text'));
   };
@@ -195,6 +293,18 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {!isModelReady && modelLoadError && (
+        <View style={styles.modelStatusContainer}>
+          <Text style={styles.modelErrorText}>{modelLoadError}</Text>
+          <TouchableOpacity
+            onPress={() => router.replace('/')} // Go back to initial page
+            style={[styles.downloadControl, styles.retryButton]}
+          >
+            <Text style={styles.downloadControlText}>Go to Setup</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -213,8 +323,8 @@ export default function ChatScreen() {
                 message.sender === 'user' ? styles.userBubble : styles.aiBubble,
               ]}
             >
-              <Text style={styles.messageText}>{message.text}</Text>
-              {message.sender === 'system' && ( // Only show play button for AI messages
+              <Text style={[styles.messageText, message.sender === 'user' && { color: 'white' }]}>{message.text}</Text>
+              {message.sender === 'system' && (
                 <TouchableOpacity
                   style={styles.playButton}
                   onPress={() => playAiMessageAudio(message.text)}
@@ -222,11 +332,11 @@ export default function ChatScreen() {
                   <Text style={styles.playButtonIcon}>🔊</Text>
                 </TouchableOpacity>
               )}
-              <Text style={styles.timestamp}>{message.timestamp}</Text>
+              <Text style={[styles.timestamp, message.sender === 'user' && { color: 'rgba(255,255,255,0.7)' }]}>{message.timestamp}</Text>
             </View>
           ))}
           {aiThinking && (
-            <View style={[styles.messageBubble, styles.aiBubble]}>
+            <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
               <ActivityIndicator size="small" color="#333" />
               <Text style={styles.timestamp}>AI is thinking...</Text>
             </View>
@@ -245,12 +355,17 @@ export default function ChatScreen() {
                 multiline
                 returnKeyType="send"
                 onSubmitEditing={handleSendText}
+                editable={isModelReady} // Only editable if model is ready
               />
-              <TouchableOpacity style={styles.sendButton} onPress={handleSendText}>
+              <TouchableOpacity
+                style={[styles.sendButton, !isModelReady && styles.disabledButton]}
+                onPress={handleSendText}
+                disabled={!isModelReady}
+              >
                 <Text style={styles.sendButtonText}>Send</Text>
               </TouchableOpacity>
             </View>
-          ) : ( // Voice mode
+          ) : (
             <View style={styles.voiceInputToolbar}>
               <View style={styles.waveformRow}>
                 {waveformHeights.map((h, index) => (
@@ -264,8 +379,9 @@ export default function ChatScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.recordButton}
+                  style={[styles.recordButton, !isModelReady && styles.disabledButton]}
                   onPress={isRecording ? stopRecording : startRecording}
+                  disabled={!isModelReady}
                 >
                   {isRecording ? (
                     <ActivityIndicator size="large" color="#fff" />
@@ -281,7 +397,11 @@ export default function ChatScreen() {
             </View>
           )}
 
-          <TouchableOpacity style={styles.modeToggleButton} onPress={toggleInputMode}>
+          <TouchableOpacity
+            style={styles.modeToggleButton}
+            onPress={toggleInputMode}
+            disabled={isRecording} // Disable mode toggle while recording
+          >
             <Text style={styles.modeToggleButtonText}>
               {currentMode === 'text' ? '🎤' : '⌨️'}
             </Text>
@@ -333,7 +453,7 @@ const styles = StyleSheet.create({
   },
   imagePreviewContainer: {
     width: '100%',
-    height: 180, // Fixed height for image preview
+    height: 180,
     backgroundColor: '#eee',
     justifyContent: 'center',
     alignItems: 'center',
@@ -367,36 +487,44 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     alignSelf: 'flex-end',
-    backgroundColor: '#007AFF', // Blue for user
+    backgroundColor: '#007AFF',
     borderBottomRightRadius: 5,
   },
   aiBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: '#fff', // White for AI
+    backgroundColor: '#fff',
     borderBottomLeftRadius: 5,
-    flexDirection: 'row', // To align text and play button
+    flexDirection: 'row',
     alignItems: 'center',
+  },
+  aiThinkingBubble: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   messageText: {
     fontSize: 16,
     color: '#333',
-    flexShrink: 1, // Allow text to wrap
+    flexShrink: 1,
   },
   timestamp: {
     fontSize: 10,
     color: '#777',
     alignSelf: 'flex-end',
     marginTop: 5,
+    marginLeft: 'auto',
   },
   playButton: {
-    marginLeft: 8, // Space between text and button
+    marginLeft: 8,
     padding: 5,
     borderRadius: 15,
-    backgroundColor: '#e0e0e0', // Light gray background
+    backgroundColor: '#e0e0e0',
   },
   playButtonIcon: {
     fontSize: 16,
-    color: '#007AFF', // Blue icon
+    color: '#007AFF',
   },
   inputAreaContainer: {
     backgroundColor: '#fff',
@@ -410,14 +538,14 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 10,
     alignItems: 'center',
-    flexDirection: 'row', // To place toggle button next to input area
+    flexDirection: 'row',
     justifyContent: 'space-between',
   },
   textInputToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1, // Take up available space
-    marginRight: 10, // Space for the toggle button
+    flex: 1,
+    marginRight: 10,
   },
   textInput: {
     flex: 1,
@@ -427,7 +555,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     marginRight: 10,
-    maxHeight: 100, // Prevent input from growing too large
+    maxHeight: 100,
   },
   sendButton: {
     backgroundColor: '#007AFF',
@@ -443,16 +571,16 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   voiceInputToolbar: {
-    flex: 1, // Take up available space
+    flex: 1,
     alignItems: 'center',
-    marginRight: 10, // Space for the toggle button
+    marginRight: 10,
   },
   waveformRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'flex-end',
     height: 60,
-    width: '100%', // Use full width of its container
+    width: '100%',
     marginBottom: 15,
   },
   waveformBar: {
@@ -497,7 +625,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   modeToggleButton: {
-    backgroundColor: '#e0eaff', // Light blue for toggle button
+    backgroundColor: '#e0eaff',
     borderRadius: 30,
     width: 60,
     height: 60,
@@ -512,20 +640,81 @@ const styles = StyleSheet.create({
   modeToggleButtonText: {
     fontSize: 28,
   },
-  saveTranscriptButton: { // This button is now within the main chat area, not the toolbar
-    backgroundColor: '#e0eaff',
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 25,
-    width: '80%',
-    alignSelf: 'center', // Center it
-    alignItems: 'center',
-    marginTop: 20, // Add some space from chat
-    marginBottom: 10, // Space from bottom of scrollview
+  disabledButton: {
+    opacity: 0.5,
   },
-  saveTranscriptButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#007AFF',
+
+  // Model Status Styles
+  modelStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#f5f5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+  },
+  modelStatusText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: '#333',
+    flexShrink: 1,
+  },
+  modelErrorText: {
+    color: 'red',
+    fontSize: 14,
+    flexShrink: 1,
+    marginRight: 10,
+  },
+  downloadControls: {
+    flexDirection: 'row',
+    marginLeft: 'auto',
+    gap: 8,
+    marginTop: 5,
+  },
+  downloadControl: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pauseButton: {
+    backgroundColor: '#ff9500',
+  },
+  resumeButton: {
+    backgroundColor: '#34c759',
+  },
+  cancelButton: {
+    backgroundColor: '#ff3b30',
+  },
+  retryButton: {
+    backgroundColor: '#007AFF',
+    marginLeft: 10,
+  },
+  downloadControlText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  progressBarContainer: {
+    height: 4,
+    width: '100%',
+    backgroundColor: '#e0e0e0',
+    borderRadius: 2,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 2,
   },
 });
