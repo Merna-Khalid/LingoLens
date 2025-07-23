@@ -13,7 +13,6 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.BufferedInputStream
 
-// Import LlmInferenceModel and InferenceListener from the same package
 import expo.modules.lingopromultimodalmodule.LlmInferenceModel
 import expo.modules.lingopromultimodalmodule.InferenceListener
 
