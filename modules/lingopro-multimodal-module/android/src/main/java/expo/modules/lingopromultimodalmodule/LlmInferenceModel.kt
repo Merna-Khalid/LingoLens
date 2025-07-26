@@ -53,6 +53,22 @@ class LlmInferenceModel(
         try {
             llmInference = LlmInference.createFromOptions(context, inferenceOptions)
             inferenceListener?.logging(this, "LLM inference engine created successfully")
+            // --- EXTRA TEST: Log model characteristics ---
+            val characteristicsMessage = """
+                LlmInferenceModel Characteristics:
+                - Model Path: $modelPath
+                - Max Tokens (configured): $maxTokens
+                - Top K (configured): $topK
+                - Temperature (configured): $temperature
+                - Random Seed (configured): $randomSeed
+                - Multi-modal (configured): $multiModal
+                Note: 'max_num_images' is an intrinsic model property and not directly queryable from the LlmInference public API.
+                      The previous error 'Image added exceeds the maximum number of images allowed: 0' indicates that
+                      the loaded model's internal configuration for max_num_images is indeed 0, regardless of the 'multiModal' flag passed here.
+              """.trimIndent()
+                    Log.d("LlmInferenceModel", characteristicsMessage)
+                    inferenceListener?.logging(this, characteristicsMessage)
+            // --- END ---
         } catch (e: Exception) {
             inferenceListener?.logging(this, "Error creating LLM inference engine: ${e.message}")
             throw IOException("Failed to initialize MediaPipe LLM: ${e.message}", e) // Re-throw as IOException

@@ -1,6 +1,7 @@
 package expo.modules.lingopromultimodalmodule
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -179,11 +180,28 @@ class LingoproMultimodalModule : Module() {
                         "handle" to modelHandle,
                         "message" to "Attempting to create model from path: $modelPath"
                     ))
+                    // Parse the path as a URI and get its clean path component
+                    val cleanedPath = Uri.parse(modelPath).path
+                    if (cleanedPath == null) {
+                        throw IllegalArgumentException("Invalid modelPath URI: $modelPath")
+                    }
+                    Log.d(TAG, "createModel: Cleaned modelPath: $cleanedPath")
+                    sendEvent("logging", mapOf(
+                        "handle" to modelHandle,
+                        "message" to "createModel: Cleaned modelPath: $cleanedPath"
+                    ))
 
-                    val modelFile = File(modelPath) // Create File object from the path
+                    val modelFile = File(cleanedPath) // Create File object from the cleaned path
+                    Log.d(TAG, "createModel: Attempting to create model from absolute path: ${modelFile.absolutePath}")
+                    sendEvent("logging", mapOf(
+                        "handle" to modelHandle,
+                        "message" to "Attempting to create model from absolute path: ${modelFile.absolutePath}"
+                    ))
+
                     if (!modelFile.exists()) {
                         throw FileNotFoundException("Model file not found at path: ${modelFile.absolutePath}")
                     }
+
 
                     val model = LlmInferenceModel(
                         appContext.reactContext!!,
