@@ -47,7 +47,10 @@ class LlmInferenceModel(
             .setModelPath(modelPath)
             .setMaxTokens(maxTokens)
             .setPreferredBackend(LlmInference.Backend.CPU)
-            // .setMaxNumImages(1) // Removed this line as it was causing unresolved reference for some users
+            // NOTE: it is mentioned that gemma-3n accepts a maximum of 1 page
+            // per session so we need to explicitly set setMaxNumImages to 1
+            // SRC: https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference/android
+            .setMaxNumImages(1)
             .build()
 
         try {
