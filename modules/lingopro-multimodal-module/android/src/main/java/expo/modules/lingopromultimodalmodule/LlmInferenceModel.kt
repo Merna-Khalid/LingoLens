@@ -116,22 +116,34 @@ class LlmInferenceModel(
 
             llmInferenceSession = LlmInferenceSession.createFromOptions(llmInference, sessionOptions)
 
-            llmInferenceSession.addQueryChunk(prompt)
             // Add the prompt to the session
-            if (multiModal && imagePath.isNotEmpty()) { // Use isNotEmpty() for string check
-                try {
-                    val imageUri = Uri.parse(imagePath)
-                    context.contentResolver.openInputStream(imageUri)?.use { inputStream ->
-                        val bitmap: Bitmap = BitmapFactory.decodeStream(inputStream)
-                        val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
-                        llmInferenceSession.addImage(mpImage)
-                        Log.d("LlmInferenceModel", "Image added to async session from path: $imagePath")
+            llmInferenceSession.addQueryChunk(prompt)
+
+            // Add image to the session (if multiModal is enabled)
+            if (multiModal && imagePath.isNotEmpty()) {
+                val imageUri = Uri.parse(imagePath)
+                val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
+                if (inputStream != null) {
+                    // Use a nullable Bitmap and safe calls
+                    val bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream)
+
+                    // Close the input stream in a finally block or after use
+                    // It's crucial to close streams even if an error occurs during bitmap decoding
+                    try {
+                        if (bitmap != null) {
+                            val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
+                            llmInferenceSession.addImage(mpImage)
+                        } else {
+                            Log.d("LlmInferenceModel", "Warning: Could not decode bitmap from stream for image URI: ${imageUri}")
+                        }
+                    } finally {
+                        // Ensure the input stream is closed
+                        try {
+                            inputStream.close()
+                        } catch (e: IOException) {
+                            Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e("LlmInferenceModel", "Error processing image for async: ${e.message}", e)
-                    inferenceListener?.onError(this, requestId, "Image processing failed for async: ${e.message}")
-                    // Decide if you want to throw here or just log and continue without image
-                    // For async, it's often better to log and let the text generation proceeds if possible
                 }
             }
 
@@ -181,19 +193,31 @@ class LlmInferenceModel(
             // Add the prompt to the session
             llmInferenceSession.addQueryChunk(prompt)
 
-            if (multiModal && imagePath.isNotEmpty()) { // Use isNotEmpty() for string check
-                try {
-                    val imageUri = Uri.parse(imagePath)
-                    context.contentResolver.openInputStream(imageUri)?.use { inputStream ->
-                        val bitmap: Bitmap = BitmapFactory.decodeStream(inputStream)
-                        val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
-                        llmInferenceSession.addImage(mpImage)
-                        Log.d("LlmInferenceModel", "Image added to synchronous session from path: $imagePath")
+            // Add image to the session (if multiModal is enabled)
+            if (multiModal && imagePath.isNotEmpty()) {
+                val imageUri = Uri.parse(imagePath)
+                val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
+                if (inputStream != null) {
+                    // Use a nullable Bitmap and safe calls
+                    val bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream)
+
+                    // Close the input stream in a finally block or after use
+                    // It's crucial to close streams even if an error occurs during bitmap decoding
+                    try {
+                        if (bitmap != null) {
+                            val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
+                            llmInferenceSession.addImage(mpImage)
+                        } else {
+                            Log.d("LlmInferenceModel", "Warning: Could not decode bitmap from stream for image URI: ${imageUri}")
+                        }
+                    } finally {
+                        // Ensure the input stream is closed
+                        try {
+                            inputStream.close()
+                        } catch (e: IOException) {
+                            Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e("LlmInferenceModel", "Error processing image for synchronous: ${e.message}", e)
-                    inferenceListener?.onError(this, requestId, "Image processing failed for synchronous: ${e.message}")
-                    throw IOException("Image processing failed: ${e.message}", e)
                 }
             }
 
