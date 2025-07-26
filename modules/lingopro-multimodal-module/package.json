@@ -1,0 +1,9 @@
+{
+  "name": "lingopro-multimodal-module",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "keywords": ["expo-module"],
+  "peerDependencies": {
+    "expo-modules-core": "*"
+  }
+}

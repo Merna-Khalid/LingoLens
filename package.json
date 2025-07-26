@@ -47,7 +47,8 @@
     "react-native-safe-area-context": "^5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-web": "~0.20.0",
-    "react-native-webview": "13.13.5"
+    "react-native-webview": "13.13.5",
+    "lingopro-multimodal-module": "file:modules/lingopro-multimodal-module"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -56,10 +57,5 @@
     "eslint-config-expo": "~9.2.0",
     "typescript": "~5.8.3"
   },
-  "private": true,
-  "expo": {
-    "autolinking": {
-      "nativeModulesDir": "modules"
-    }
-  }
+  "private": true
 }
