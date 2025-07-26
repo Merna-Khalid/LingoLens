@@ -1,7 +1,7 @@
-import { useLLM } from '@/modules/lingopro-multimodal-module';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
+import { DownloadableLlmReturn, useLLM } from 'lingopro-multimodal-module';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useModel } from './context/ModelContext';
@@ -28,7 +28,7 @@ export default function InitialPage() {
 
   const { setModelHandle, releaseLoadedModel, isModelLoaded: isGlobalModelLoaded } = useModel();
 
-// export type UseLLMDownloadableProps = BaseLlmParams & { modelUrl: string; modelName: string; storageType?: undefined; modelPath?: undefined };
+  // export type UseLLMDownloadableProps = BaseLlmParams & { modelUrl: string; modelName: string; storageType?: undefined; modelPath?: undefined };
   const defaultDownloadableLLM = useLLM({
     storageType: 'asset',
     modelName: DEFAULT_MODEL_NAME,
