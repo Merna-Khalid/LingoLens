@@ -7,12 +7,14 @@ import { Recording } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system';
 import { requireNativeModule } from 'expo-modules-core';
+import { useModel } from './context/ModelContext';
 
+// Get the native module instance
 const LingoProMultimodal = requireNativeModule('LingoproMultimodal');
 
 const { width } = Dimensions.get('window');
 
-
+// Define chat message interface
 interface ChatMessage {
   id: string;
   text: string;
@@ -22,13 +24,16 @@ interface ChatMessage {
 
 // Waveform bar component
 const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
-  <View style={[styles.waveformBar, { height: Math.max(5, height) }]} />
+  <View style={[styles.waveformBar, { height: Math.max(5, height) }]} /> // Min height to always be visible
 );
 
 type InputMode = 'text' | 'voice';
 
 export default function ChatScreen() {
+  // Receive modelHandle along with photoUri and initialMode
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
+
+  const { modelHandle, isModelLoaded } = useModel();
 
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<InputMode>(initialMode || 'text');
@@ -41,8 +46,11 @@ export default function ChatScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [isModelReady, setIsModelReady] = useState(false);
-  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+  const isModelReady = isModelLoaded;
+  const [modelLoadError, setModelLoadError] = useState<string | null>(
+      isModelReady ? null : "AI model not loaded. Please go back to setup."
+  );
+
 
   // Function to get current timestamp
   const getTimestamp = () => {
@@ -50,29 +58,6 @@ export default function ChatScreen() {
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const checkModelStatus = useCallback(async () => {
-    try {
-      const loaded = await LingoProMultimodal.isModelLoaded();
-      setIsModelReady(loaded);
-      if (!loaded) {
-        setModelLoadError("AI model not loaded. Please go back to setup and load the model.");
-        Alert.alert(
-          "Model Not Loaded",
-          "The AI model is not loaded. Please go back to the initial setup screen to load or download the model.",
-          [{ text: "OK", onPress: () => router.replace('/') }] // Go back to initial page
-        );
-      }
-    } catch (error: any) {
-      console.error("Error checking model status:", error);
-      setIsModelReady(false);
-      setModelLoadError(`Failed to check model status: ${error.message}`);
-      Alert.alert(
-        "Model Error",
-        `Failed to check model status: ${error.message}. Please restart the app.`,
-        [{ text: "OK", onPress: () => router.replace('/') }]
-      );
-    }
-  }, []);
 
   useEffect(() => {
     if (paramImageUri) {
@@ -88,6 +73,17 @@ export default function ChatScreen() {
     } else {
       console.warn("No photo URI provided for Chat. Redirecting to main page.");
       router.replace('/main-page');
+      return; // Exit early if no image URI
+    }
+
+    // If modelHandle is not valid, immediately show error and redirect
+    if (!isModelReady) {
+      Alert.alert(
+        "Model Not Loaded",
+        "The AI model was not properly loaded. Please go back to the initial setup screen to load or download the model.",
+        [{ text: "OK", onPress: () => router.replace('/') }] // Go back to initial page
+      );
+      return; // Exit early if model not ready
     }
 
     (async () => {
@@ -96,8 +92,6 @@ export default function ChatScreen() {
         Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
       }
     })();
-
-    checkModelStatus();
 
     return () => {
       if (recording) {
@@ -108,7 +102,7 @@ export default function ChatScreen() {
       }
       Speech.stop();
     };
-  }, [paramImageUri, checkModelStatus]);
+  }, [paramImageUri, isModelReady]); // Depend on isModelReady
 
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -192,8 +186,8 @@ export default function ChatScreen() {
 
   // --- AI Message Processing ---
   const processMessageWithAI = async (textInput: string, audioUri: string | null, mode: InputMode) => {
-    if (!isModelReady) {
-      Alert.alert('AI Not Ready', 'The AI model is not loaded. Please load it first.');
+    if (!isModelReady || modelHandle === undefined) { // Ensure modelHandle is valid
+      Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
       return;
     }
 
@@ -217,11 +211,15 @@ export default function ChatScreen() {
         throw new Error("Image URI is missing for AI processing.");
       }
 
-      console.log("Calling native module with:", { textInput, imageUri, audioUri });
-      const aiResponseText: string = await LingoProMultimodal.processMultimodalInput(
+      console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
+      // Pass the modelHandle to the native module
+      const aiResponseText: string = await LingoProMultimodal.generateResponse(
+        modelHandle, // Pass the loaded model handle
+        Math.floor(Math.random() * 1000000), // Generate a random request ID
         textInput,
-        imageUri,
-        audioUri
+        imageUri
+        // Note: The native generateResponse currently doesn't take audioUri.
+        // TODO: Update generateResponse
       );
       console.log("MediaPipe AI response:", aiResponseText);
 
@@ -293,6 +291,7 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {/* Display model status/error if not ready */}
       {!isModelReady && modelLoadError && (
         <View style={styles.modelStatusContainer}>
           <Text style={styles.modelErrorText}>{modelLoadError}</Text>
@@ -400,7 +399,7 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={styles.modeToggleButton}
             onPress={toggleInputMode}
-            disabled={isRecording} // Disable mode toggle while recording
+            disabled={isRecording || !isModelReady} // Disable mode toggle if not ready
           >
             <Text style={styles.modeToggleButtonText}>
               {currentMode === 'text' ? '🎤' : '⌨️'}

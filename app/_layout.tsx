@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react'; // React needs to be imported for React.Fragment
 import 'react-native-reanimated';
+import { ModelProvider } from './context/ModelContext';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 
@@ -22,6 +23,7 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       {/* Wrap Stack and StatusBar in a Fragment to provide a single child to ThemeProvider */}
       <>
+      <ModelProvider>
         <Stack>
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="initial-page" options={{ headerShown: false }} />
@@ -34,6 +36,7 @@ export default function RootLayout() {
           <Stack.Screen name="+not-found" />
         </Stack>
         <StatusBar style="auto" />
+      </ModelProvider>
       </>
     </ThemeProvider>
   );

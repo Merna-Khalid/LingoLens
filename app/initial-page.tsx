@@ -3,13 +3,16 @@ import { View, Text, Button, StyleSheet, ScrollView, ActivityIndicator, Alert, P
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
-import { useLLM } from './hooks/useLLM'; // Import the new useLLM hook
-import { LoggingEventPayload, DownloadableLlmReturn, BaseLlmReturn } from './types/ExpoLlmMediapipe.types'; // Adjust import path for types
+import { useLLM } from './hooks/useLLM';
+import { useModel } from './context/ModelContext';
+import { LoggingEventPayload, DownloadableLlmReturn, BaseLlmReturn } from './types/ExpoLlmMediapipe.types';
 
 // Constants for model and file paths
 const DEFAULT_MODEL_NAME = "gemma-3n-E4B-it-int4.task"; // Default downloadable model name
 const DEFAULT_MODEL_URL = "https://huggingface.co/MrZeggers/gemma-3n-mobile/resolve/main/gemma-3n-E4B-it-int4.task";
-const MODEL_DIR = `${FileSystem.documentDirectory}models/`; // Directory for all models
+const MODELS_BASE_DIR = `${FileSystem.documentDirectory}models/`;
+const DEFAULT_MODEL_PATH = `${MODELS_BASE_DIR}${DEFAULT_MODEL_NAME}`;
+const USER_FILES_DIR = `${MODELS_BASE_DIR}user_files/`;
 
 // Define possible states for the UI flow of this page
 type AppUIState = 'checking' | 'options' | 'downloading' | 'loading' | 'error' | 'ready';
@@ -18,13 +21,11 @@ type ActiveModelType = 'default-downloadable' | 'user-file' | null;
 export default function InitialPage() {
   const [appUIState, setAppUIState] = useState<AppUIState>('checking');
   const [logs, setLogs] = useState<string[]>([]);
-  // State to hold the path of the user-selected file after it's copied
   const [userFileModelPath, setUserFileModelPath] = useState<string | null>(null);
-  // State to track which type of model is currently active/being managed
   const [activeModelType, setActiveModelType] = useState<ActiveModelType>(null);
 
-  // --- Unconditionally declare both useLLM instances ---
-  // 1. Instance for the default downloadable model
+  const { setModelHandle, releaseLoadedModel, isModelLoaded: isGlobalModelLoaded } = useModel();
+
   const defaultDownloadableLLM = useLLM({
     storageType: 'downloadable',
     modelName: DEFAULT_MODEL_NAME,
@@ -66,9 +67,58 @@ export default function InitialPage() {
   }, [addLog]);
 
   // Initial setup: Start by checking the default downloadable model
+//   useEffect(() => {
+//     setActiveModelType('default-downloadable');
+//   }, []);
+
+  // Initial setup: Check for existing models first, then default downloadable
   useEffect(() => {
-    setActiveModelType('default-downloadable');
-  }, []); // Run once on mount
+    const checkAndLoadExistingModels = async () => {
+      setAppUIState('checking');
+      addLog("Checking for existing model files...");
+
+      try {
+        // Check user_files directory first
+        const userFilesDirInfo = await FileSystem.getInfoAsync(USER_FILES_DIR);
+        if (userFilesDirInfo.exists && userFilesDirInfo.isDirectory) {
+          const files = await FileSystem.readDirectoryAsync(USER_FILES_DIR);
+          const modelFiles = files.filter(file => file.endsWith('.task'));
+          if (modelFiles.length > 0) {
+            const firstModelPath = `${USER_FILES_DIR}${modelFiles[0]}`;
+            addLog(`Found existing user model: ${firstModelPath}. Attempting to load.`);
+            setUserFileModelPath(firstModelPath); // This will trigger userFileLLM to load
+            setActiveModelType('user-file');
+            return; // Exit, as we are attempting to load a user file
+          }
+        }
+
+        // If no user files, check for the default downloadable model
+        const defaultModelInfo = await FileSystem.getInfoAsync(DEFAULT_MODEL_PATH);
+        if (defaultModelInfo.exists && defaultModelInfo.isFile) {
+          addLog(`Found default downloaded model: ${DEFAULT_MODEL_PATH}. Attempting to load.`);
+          setActiveModelType('default-downloadable'); // This will trigger defaultDownloadableLLM to load
+          return; // Exit, as we are attempting to load the default model
+        }
+
+        // If no existing models, go to options
+        addLog("No existing model files found. Showing options.");
+        setAppUIState('options');
+
+      } catch (error: any) {
+        addLog(`Error checking existing models: ${error.message}`);
+        setAppUIState('options'); // Fallback to options on error
+      }
+    };
+
+    if (!isGlobalModelLoaded) { // Only run this check if no model is currently loaded in context
+      checkAndLoadExistingModels();
+    } else {
+      // If a model is already loaded in context (e.g., from a previous session), navigate
+      addLog("Model already loaded in context. Navigating to welcome screen.");
+      setAppUIState('ready');
+      navigateToWelcomeScreen();
+    }
+  }, [isGlobalModelLoaded, addLog, navigateToWelcomeScreen]);
 
   // Effect to manage appUIState based on the active LLM hook's states
   useEffect(() => {
@@ -88,6 +138,13 @@ export default function InitialPage() {
 
 
     if (llmToObserve.isLoaded) {
+      // Set the model handle in the global context
+      if (llmToObserve.modelHandle !== undefined) {
+        setModelHandle(llmToObserve.modelHandle);
+        addLog(`Model loaded and handle ${llmToObserve.modelHandle} set in context.`);
+      } else {
+        addLog("Model loaded but handle is undefined. This should not happen.");
+      }
       setAppUIState('ready');
       navigateToWelcomeScreen();
       return;
@@ -128,14 +185,14 @@ export default function InitialPage() {
     }
 
   }, [
-    activeModelType, defaultDownloadableLLM, userFileLLM, navigateToWelcomeScreen, addLog,
+    activeModelType, defaultDownloadableLLM, userFileLLM, navigateToWelcomeScreen, addLog, setModelHandle,
     // Explicitly list all properties that might change and affect this effect
-    defaultDownloadableLLM.isLoaded, defaultDownloadableLLM.isLoading, defaultDownloadableLLM.loadError,
+    defaultDownloadableLLM.isLoaded, defaultDownloadableLLM.isLoading, defaultDownloadableLLM.loadError, defaultDownloadableLLM.modelHandle,
     (defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus,
     (defaultDownloadableLLM as DownloadableLlmReturn).downloadError,
     (defaultDownloadableLLM as DownloadableLlmReturn).isCheckingStatus,
     (defaultDownloadableLLM as DownloadableLlmReturn).loadModel,
-    userFileLLM.isLoaded, userFileLLM.isLoading, userFileLLM.loadError,
+    userFileLLM.isLoaded, userFileLLM.isLoading, userFileLLM.loadError, userFileLLM.modelHandle,
   ]);
 
 
@@ -160,28 +217,32 @@ export default function InitialPage() {
       addLog(`Selected file: ${file.name} (URI: ${file.uri})`);
 
       // Ensure the target directory exists
-      const targetDir = `${MODEL_DIR}user_files/`; // Use a sub-directory for user files
-      const dirInfo = await FileSystem.getInfoAsync(targetDir);
+      const dirInfo = await FileSystem.getInfoAsync(USER_FILES_DIR);
       if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
-        addLog("Created user files directory for file copy.");
+          await FileSystem.makeDirectoryAsync(USER_FILES_DIR, { intermediates: true });
+          addLog("Created user files directory for file copy.");
       }
 
-      // Define the target path using the actual selected file's name
-      const targetFilePath = `${targetDir}${file.name}`;
+      const targetFilePath = `${USER_FILES_DIR}${file.name}`;
       addLog(`Copying selected file to ${targetFilePath}...`);
 
-      // Copy the selected file to our app's designated user files directory
       await FileSystem.copyAsync({
-        from: file.uri,
-        to: targetFilePath,
+          from: file.uri,
+          to: targetFilePath,
       });
       addLog("File copied successfully. Now setting LLM props to load this file via hook.");
 
-      // Set the userFileModelPath state, which will trigger the userFileLLM hook to load
-      setUserFileModelPath(targetFilePath);
-      setActiveModelType('user-file'); // Indicate that the user-file LLM is now active
-      // The useEffect will now detect the change in userFileLLM.isLoaded and trigger navigation
+      const fileInfo = await FileSystem.getInfoAsync(targetFilePath);
+      if (fileInfo.exists && fileInfo.size > 0) {
+        addLog(`✅ File exists at ${targetFilePath}, size: ${fileInfo.size} bytes`);
+      } else {
+        throw new Error("❌ File missing or size is 0 bytes.");
+      }
+
+      addLog("Now setting LLM props to load this file via hook.");
+
+      setUserFileModelPath(targetFilePath.replace("file://", ""));
+      setActiveModelType('user-file');
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -190,20 +251,19 @@ export default function InitialPage() {
         "File Load Error",
         `Failed to load model from selected file: ${errorMsg}. Please ensure it's a valid model file and try again.`
       );
-      setAppUIState('options'); // Revert to options state on error
+      setAppUIState('options');
     }
   }, [addLog]);
 
 
   // Handler for initiating default model download
   const handleDownloadDefaultModel = useCallback(() => {
-    setActiveModelType('default-downloadable'); // Ensure the default LLM is active
-    // The useEffect will then pick up the defaultDownloadableLLM's state and trigger download/load
-    if (defaultDownloadableLLM.downloadStatus === 'not_downloaded' || defaultDownloadableLLM.downloadStatus === 'error') {
-        defaultDownloadableLLM.downloadModel(); // Explicitly trigger download if not already
-    } else if (defaultDownloadableLLM.downloadStatus === 'downloaded' && !defaultDownloadableLLM.isLoaded) {
-        defaultDownloadableLLM.loadModel(); // Explicitly trigger load if downloaded but not loaded
-    }
+      setActiveModelType('default-downloadable');
+      if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'not_downloaded' || (defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'error') {
+          (defaultDownloadableLLM as DownloadableLlmReturn).downloadModel();
+      } else if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'downloaded' && !defaultDownloadableLLM.isLoaded) {
+          (defaultDownloadableLLM as DownloadableLlmReturn).loadModel();
+      }
   }, [defaultDownloadableLLM]);
 
 

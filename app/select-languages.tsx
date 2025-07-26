@@ -28,7 +28,7 @@ export default function SelectLanguageScreen() {
 
   const languages = [
     { id: 'spanish', flag: '🇪🇸', language: 'Spanish', nativeLanguage: 'Español' },
-    { id: 'french', flag: '�🇷', language: 'French', nativeLanguage: 'Français' },
+    { id: 'french', flag: '🇫🇷', language: 'French', nativeLanguage: 'Français' },
     { id: 'german', flag: '🇩🇪', language: 'German', nativeLanguage: 'Deutsch' },
     { id: 'italian', flag: '🇮🇹', language: 'Italian', nativeLanguage: 'Italiano' },
     { id: 'japanese', flag: '🇯🇵', language: 'Japanese', nativeLanguage: '日本語' },

@@ -6,6 +6,7 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.Promise
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,6 +19,9 @@ import expo.modules.lingopromultimodalmodule.InferenceListener
 
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
 private const val DOWNLOAD_DIRECTORY = "llm_models"
+
+private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+private var activeJobs: MutableList<Job> = mutableListOf()
 
 class LingoproMultimodalModule : Module() {
     private var nextHandle = 1
@@ -56,7 +60,6 @@ class LingoproMultimodalModule : Module() {
 
         // Check if the file already exists
         if (outputFile.exists()) {
-            // The file already exists, no need to copy again
             sendEvent("logging", mapOf(
                 "message" to "File already exists: ${outputFile.path}, size: ${outputFile.length()}"
             ))
@@ -65,6 +68,7 @@ class LingoproMultimodalModule : Module() {
 
         try {
             val assetList = context.assets.list("") ?: arrayOf()
+            Log.d(TAG, "Available assets: ${assetList.joinToString()}")
             sendEvent("logging", mapOf(
                 "message" to "Available assets: ${assetList.joinToString()}"
             ))
@@ -75,6 +79,7 @@ class LingoproMultimodalModule : Module() {
                 throw IllegalArgumentException(errorMsg)
             }
 
+            Log.d(TAG, "Copying asset $modelName to ${outputFile.path}")
             sendEvent("logging", mapOf(
                 "message" to "Copying asset $modelName to ${outputFile.path}"
             ))
@@ -91,20 +96,23 @@ class LingoproMultimodalModule : Module() {
                         total += read
 
                         if (total % (1024 * 1024) == 0) { // Log every MB
+                            Log.d(TAG, "Copied $total bytes so far for $modelName")
                             sendEvent("logging", mapOf(
-                                "message" to "Copied $total bytes so far"
+                                "message" to "Copied $total bytes so far for $modelName"
                             ))
                         }
                     }
 
+                    Log.d(TAG, "Copied $total bytes total for $modelName")
                     sendEvent("logging", mapOf(
-                        "message" to "Copied $total bytes total"
+                        "message" to "Copied $total bytes total for $modelName"
                     ))
                 }
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Error copying asset file: ${e.message}", e)
             sendEvent("logging", mapOf(
-                "message" to "Error copying file: ${e.message}"
+                "message" to "Error copying asset file: ${e.message}"
             ))
             throw e
         }
@@ -142,7 +150,6 @@ class LingoproMultimodalModule : Module() {
         return modelHandle
     }
 
-    // Track active downloads
     private val activeDownloads = mutableMapOf<String, Job>()
 
     override fun definition() = ModuleDefinition {
@@ -154,186 +161,238 @@ class LingoproMultimodalModule : Module() {
 
         Events("onChange", "onPartialResponse", "onErrorResponse", "logging", "downloadProgress")
 
-        Function("hello") {
-            "Hello world from Lingopro Multimodal! 👋" // Updated message
+        OnDestroy {
+            Log.d(TAG, "LingoproMultimodal OnDestroy: Cancelling all active jobs and cleaning up models.")
+            activeJobs.forEach { it.cancel() }
+            activeJobs.clear()
+            modelMap.values.forEach { it.close() }
+            modelMap.clear()
         }
 
         AsyncFunction("createModel") { modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
-            try {
-                val modelHandle = nextHandle++
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val modelHandle = nextHandle++
 
-                // Log that we're creating a model
-                sendEvent("logging", mapOf(
-                    "handle" to modelHandle,
-                    "message" to "Creating model from path: $modelPath"
-                ))
+                    Log.d(TAG, "createModel: Attempting to create model from path: $modelPath, handle: $modelHandle")
+                    sendEvent("logging", mapOf(
+                        "handle" to modelHandle,
+                        "message" to "Attempting to create model from path: $modelPath"
+                    ))
 
-                val model = LlmInferenceModel(
-                    appContext.reactContext!!,
-                    modelPath,
-                    maxTokens,
-                    topK,
-                    temperature.toFloat(),
-                    randomSeed,
-                    multiModal,
-                    inferenceListener = createInferenceListener(modelHandle)
-                )
-                modelMap[modelHandle] = model
-                promise.resolve(modelHandle)
-            } catch (e: Exception) {
-                // Log the error
-                sendEvent("logging", mapOf(
-                    "message" to "Model creation failed: ${e.message}"
-                ))
-                promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+                    val modelFile = File(modelPath) // Create File object from the path
+                    if (!modelFile.exists()) {
+                        throw FileNotFoundException("Model file not found at path: ${modelFile.absolutePath}")
+                    }
+
+                    val model = LlmInferenceModel(
+                        appContext.reactContext!!,
+                        modelFile.absolutePath,
+                        maxTokens,
+                        topK,
+                        temperature.toFloat(),
+                        randomSeed,
+                        multiModal,
+                        inferenceListener = createInferenceListener(modelHandle)
+                    )
+                    modelMap[modelHandle] = model
+                    withContext(Dispatchers.Main) {
+                        promise.resolve(modelHandle)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "createModel: Model creation failed: ${e.message}", e)
+                    sendEvent("logging", mapOf(
+                        "message" to "Model creation failed: ${e.message}"
+                    ))
+                    withContext(Dispatchers.Main) {
+                        promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+                    }
+                }
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
         AsyncFunction("createModelFromAsset") { modelName: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
-            try {
-                // Log that we're creating a model from asset
-                sendEvent("logging", mapOf(
-                    "message" to "Creating model from asset: $modelName"
-                ))
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    Log.d(TAG, "createModelFromAsset: Creating model from asset: $modelName")
+                    sendEvent("logging", mapOf(
+                        "message" to "Creating model from asset: $modelName"
+                    ))
 
-                val modelPath = copyFileToInternalStorageIfNeeded(modelName, appContext.reactContext!!).path
+                    val modelPath = copyFileToInternalStorageIfNeeded(modelName, appContext.reactContext!!).path
 
-                sendEvent("logging", mapOf(
-                    "message" to "Model file copied to: $modelPath"
-                ))
+                    Log.d(TAG, "createModelFromAsset: Model file copied to: $modelPath")
+                    sendEvent("logging", mapOf(
+                        "message" to "Model file copied to: $modelPath"
+                    ))
 
-                val modelHandle = nextHandle++
-                val model = LlmInferenceModel(
-                    appContext.reactContext!!,
-                    modelPath,
-                    maxTokens,
-                    topK,
-                    temperature.toFloat(),
-                    randomSeed,
-                    multiModal,
-                    inferenceListener = createInferenceListener(modelHandle)
-                )
-                modelMap[modelHandle] = model
-                promise.resolve(modelHandle)
-            } catch (e: Exception) {
-                // Log the error
-                sendEvent("logging", mapOf(
-                    "message" to "Model creation from asset failed: ${e.message}"
-                ))
-                promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+                    val modelFile = File(modelPath) // Create File object from the path
+                    if (!modelFile.exists()) {
+                        throw FileNotFoundException("Model file not found at path: ${modelFile.absolutePath}")
+                    }
+
+                    val modelHandle = nextHandle++
+                    val model = LlmInferenceModel(
+                        appContext.reactContext!!,
+                        modelFile.absolutePath,
+                        maxTokens,
+                        topK,
+                        temperature.toFloat(),
+                        randomSeed,
+                        multiModal,
+                        inferenceListener = createInferenceListener(modelHandle)
+                    )
+                    modelMap[modelHandle] = model
+                    withContext(Dispatchers.Main) {
+                        promise.resolve(modelHandle)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "createModelFromAsset: Model creation from asset failed: ${e.message}", e)
+                    sendEvent("logging", mapOf(
+                        "message" to "Model creation from asset failed: ${e.message}"
+                    ))
+                    withContext(Dispatchers.Main) {
+                        promise.reject("MODEL_CREATION_FAILED", e.message ?: "Unknown error", e)
+                    }
+                }
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
         AsyncFunction("releaseModel") { handle: Int, promise: Promise ->
-            try {
-                val removed = modelMap.remove(handle) != null
-                if (removed) {
-                    promise.resolve(true)
-                } else {
-                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val model = modelMap.remove(handle)
+                    if (model != null) {
+                        model.close() // Close the underlying MediaPipe model
+                        Log.d(TAG, "releaseModel: Model with handle $handle released.")
+                        withContext(Dispatchers.Main) { promise.resolve(true) }
+                    } else {
+                        Log.w(TAG, "releaseModel: No model found for handle $handle to release.")
+                        withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "releaseModel: Failed to release model with handle $handle: ${e.message}", e)
+                    withContext(Dispatchers.Main) { promise.reject("RELEASE_FAILED", e.message ?: "Unknown error", e) }
                 }
-            } catch (e: Exception) {
-                promise.reject("RELEASE_FAILED", e.message ?: "Unknown error", e)
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
-            try {
-                val model = modelMap[handle]
-                if (model == null) {
-                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
-                    return@AsyncFunction
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val model = modelMap[handle]
+                    if (model == null) {
+                        promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                        return@launch
+                    }
+
+                    sendEvent("logging", mapOf(
+                        "handle" to handle,
+                        "message" to "Generating response with prompt: ${prompt.take(30)}..."
+                    ))
+
+                    // Use the synchronous version
+                    val response = model.generateResponse(requestId, prompt, imagePath)
+                    withContext(Dispatchers.Main) { promise.resolve(response) }
+                } catch (e: Exception) {
+                    Log.e(TAG, "generateResponse: Inference error: ${e.message}", e)
+                    sendEvent("logging", mapOf(
+                        "handle" to handle,
+                        "message" to "Generation error: ${e.message}"
+                    ))
+                    withContext(Dispatchers.Main) { promise.reject("GENERATION_FAILED", e.message ?: "Unknown error", e) }
                 }
-
-                sendEvent("logging", mapOf(
-                    "handle" to handle,
-                    "message" to "Generating response with prompt: ${prompt.take(30)}..."
-                ))
-
-                // Use the synchronous version
-                val response = model.generateResponse(requestId, prompt, imagePath)
-                promise.resolve(response)
-            } catch (e: Exception) {
-                sendEvent("logging", mapOf(
-                    "handle" to handle,
-                    "message" to "Generation error: ${e.message}"
-                ))
-                promise.reject("GENERATION_FAILED", e.message ?: "Unknown error", e)
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
-            try {
-                val model = modelMap[handle]
-                if (model == null) {
-                    promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
-                    return@AsyncFunction
-                }
-
-                sendEvent("logging", mapOf(
-                    "handle" to handle,
-                    "requestId" to requestId,
-                    "message" to "Starting async generation with prompt: ${prompt.take(30)}..."
-                ))
-
-                // Use the async version with callback and event emission
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
-                    model.generateResponseAsync(requestId, prompt, imagePath) { result ->
-                        try {
-                            if (result.isEmpty()) {
-                                sendEvent("logging", mapOf(
-                                    "handle" to handle,
-                                    "requestId" to requestId,
-                                    "message" to "Generation completed but returned empty result"
-                                ))
-                                promise.reject("GENERATION_FAILED", "Failed to generate response", null)
-                            } else {
-                                sendEvent("logging", mapOf(
-                                    "handle" to handle,
-                                    "requestId" to requestId,
-                                    "message" to "Generation completed successfully with ${result.length} characters"
-                                ))
-
-                                // We don't resolve with the final result here anymore
-                                // The client will assemble the full response from streaming events
-                                promise.resolve(true)  // Just send success signal
-                            }
-                        } catch (e: Exception) {
-                            sendEvent("logging", mapOf(
-                                "handle" to handle,
-                                "requestId" to requestId,
-                                "message" to "Error in async result callback: ${e.message}"
-                            ))
-                            // Only reject if not already settled
-                            promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
-                        }
+                    val model = modelMap[handle]
+                    if (model == null) {
+                        withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
+                        return@launch
                     }
-                } catch (e: Exception) {
+
                     sendEvent("logging", mapOf(
                         "handle" to handle,
                         "requestId" to requestId,
-                        "message" to "Exception during generateResponseAsync call: ${e.message}"
+                        "message" to "Starting async generation with prompt: ${prompt.take(30)}..."
                     ))
-                    promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+
+                    // Use the async version with callback and event emission
+                    try {
+                        model.generateResponseAsync(requestId, prompt, imagePath) { result ->
+                            try {
+                                if (result.isEmpty()) {
+                                    sendEvent("logging", mapOf(
+                                        "handle" to handle,
+                                        "requestId" to requestId,
+                                        "message" to "Generation completed but returned empty result"
+                                    ))
+                                    promise.reject("GENERATION_FAILED", "Failed to generate response", null)
+                                } else {
+                                    sendEvent("logging", mapOf(
+                                        "handle" to handle,
+                                        "requestId" to requestId,
+                                        "message" to "Generation completed successfully with ${result.length} characters"
+                                    ))
+
+                                    // We don't resolve with the final result here anymore
+                                    // The client will assemble the full response from streaming events
+                                    promise.resolve(true)  // Just send success signal
+                                }
+                            } catch (e: Exception) {
+                                sendEvent("logging", mapOf(
+                                    "handle" to handle,
+                                    "requestId" to requestId,
+                                    "message" to "Error in async result callback: ${e.message}"
+                                ))
+                                // Only reject if not already settled
+                                promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        sendEvent("logging", mapOf(
+                            "handle" to handle,
+                            "requestId" to requestId,
+                            "message" to "Exception during generateResponseAsync call: ${e.message}"
+                        ))
+                        promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "generateResponseAsync initial call error: ${e.message}", e)
+                    sendEvent("logging", mapOf(
+                        "handle" to handle,
+                        "message" to "Outer exception in generateResponseAsync: ${e.message}"
+                    ))
+                    withContext(Dispatchers.Main) { promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e) }
                 }
-            } catch (e: Exception) {
-                sendEvent("logging", mapOf(
-                    "handle" to handle,
-                    "message" to "Outer exception in generateResponseAsync: ${e.message}"
-                ))
-                promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
         // Check if model is downloaded
         AsyncFunction("isModelDownloaded") { modelName: String, promise: Promise ->
             val modelFile = getModelFile(modelName)
-            promise.resolve(modelFile.exists() && modelFile.length() > 0)
+            val isDownloaded = modelFile.exists() && modelFile.length() > 0
+            Log.d(TAG, "isModelDownloaded: $modelName exists: $isDownloaded, size: ${modelFile.length()}")
+            promise.resolve(isDownloaded)
         }
 
         // Get list of downloaded models
         AsyncFunction("getDownloadedModels") { promise: Promise ->
-            val models = getModelDirectory().listFiles()?.map { it.name } ?: emptyList()
+            val models = getModelDirectory().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
+            Log.d(TAG, "getDownloadedModels: Found ${models.size} models: $models")
             promise.resolve(models)
         }
 
@@ -341,6 +400,7 @@ class LingoproMultimodalModule : Module() {
         AsyncFunction("deleteDownloadedModel") { modelName: String, promise: Promise ->
             val modelFile = getModelFile(modelName)
             val result = if (modelFile.exists()) modelFile.delete() else false
+            Log.d(TAG, "deleteDownloadedModel: $modelName deleted: $result")
             promise.resolve(result)
         }
 
@@ -351,12 +411,14 @@ class LingoproMultimodalModule : Module() {
 
             // Check if already downloading
             if (activeDownloads.containsKey(modelName)) {
+                Log.w(TAG, "downloadModel: Model $modelName is already being downloaded.")
                 promise.reject("ERR_ALREADY_DOWNLOADING", "This model is already being downloaded", null)
                 return@AsyncFunction
             }
 
             // Check if already exists
             if (modelFile.exists() && !overwrite) {
+                Log.d(TAG, "downloadModel: Model $modelName already exists and overwrite is false. Resolving true.")
                 promise.resolve(true)
                 return@AsyncFunction
             }
@@ -364,6 +426,7 @@ class LingoproMultimodalModule : Module() {
             // Start download in coroutine
             val downloadJob = CoroutineScope(Dispatchers.IO).launch {
                 try {
+                    Log.d(TAG, "downloadModel: Starting download for $modelName from $url")
                     val connection = URL(url).openConnection() as HttpURLConnection
 
                     // Add custom headers if provided
@@ -374,6 +437,7 @@ class LingoproMultimodalModule : Module() {
                     }
 
                     connection.connectTimeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000
+                    connection.readTimeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000 // Also set read timeout
                     connection.connect()
 
                     val contentLength = connection.contentLength.toLong()
@@ -388,15 +452,16 @@ class LingoproMultimodalModule : Module() {
 
                     while (input.read(buffer).also { count = it } != -1) {
                         if (isActive.not()) {
-                            // Download was cancelled
+                            Log.d(TAG, "downloadModel: Download for $modelName cancelled during transfer.")
                             output.close()
                             input.close()
-                            tempFile.delete()
+                            tempFile.delete() // Clean up temp file
                             sendEvent("downloadProgress", mapOf(
                                 "modelName" to modelName,
                                 "url" to url,
                                 "status" to "cancelled"
                             ))
+                            withContext(Dispatchers.Main) { promise.resolve(false) } // Resolve false on cancellation
                             return@launch
                         }
 
@@ -405,7 +470,7 @@ class LingoproMultimodalModule : Module() {
 
                         // Send progress updates, throttled to avoid too many events
                         val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastUpdateTime > 100) { // Every 100ms
+                        if (currentTime - lastUpdateTime > 200 || total == contentLength) { // Every 200ms or on completion
                             lastUpdateTime = currentTime
                             val progress = if (contentLength > 0) total.toDouble() / contentLength.toDouble() else 0.0
                             sendEvent("downloadProgress", mapOf(
@@ -430,7 +495,7 @@ class LingoproMultimodalModule : Module() {
                     }
                     tempFile.renameTo(modelFile)
 
-                    // Notify completion
+                    Log.d(TAG, "downloadModel: Download for $modelName completed successfully.")
                     sendEvent("downloadProgress", mapOf(
                         "modelName" to modelName,
                         "url" to url,
@@ -444,60 +509,79 @@ class LingoproMultimodalModule : Module() {
                         promise.resolve(true)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error downloading model: ${e.message}", e)
+                    Log.e(TAG, "downloadModel: Download failed for $modelName: ${e.message}", e)
+                    // Notify error
                     sendEvent("downloadProgress", mapOf(
                         "modelName" to modelName,
                         "url" to url,
                         "status" to "error",
-                        "error" to (e.message ?: "Unknown error")
+                        "error" to (e.message ?: "Unknown download error")
                     ))
                     withContext(Dispatchers.Main) {
-                        promise.reject("ERR_DOWNLOAD", "Failed to download model: ${e.message}", e)
+                        promise.reject("DOWNLOAD_FAILED", e.message ?: "Unknown download error", e)
                     }
                 } finally {
                     activeDownloads.remove(modelName)
+                    Log.d(TAG, "downloadModel: Cleanup for $modelName download.")
                 }
             }
-
             activeDownloads[modelName] = downloadJob
+            activeJobs.add(downloadJob)
+            downloadJob.invokeOnCompletion { activeJobs.remove(downloadJob) }
         }
 
         // Cancel download
         AsyncFunction("cancelDownload") { modelName: String, promise: Promise ->
             val job = activeDownloads[modelName]
-            if (job != null) {
-                job.cancel()
+            if (job != null && job.isActive) {
+                job.cancel() // Cancel the coroutine
                 activeDownloads.remove(modelName)
+                Log.d(TAG, "cancelDownload: Download for $modelName cancelled by request.")
+                sendEvent("downloadProgress", mapOf(
+                    "modelName" to modelName,
+                    "status" to "cancelled"
+                ))
                 promise.resolve(true)
             } else {
-                promise.resolve(false)
+                Log.d(TAG, "cancelDownload: No active download for $modelName to cancel.")
+                promise.resolve(false) // No active download to cancel
             }
         }
 
         // Create model from downloaded file
         AsyncFunction("createModelFromDownloaded") { modelName: String, maxTokens: Int?, topK: Int?, temperature: Double?, randomSeed: Int?, multiModal: Boolean?, promise: Promise ->
-            val modelFile = getModelFile(modelName)
+            val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val modelFile = getModelFile(modelName)
 
-            if (!modelFile.exists()) {
-                promise.reject("ERR_MODEL_NOT_FOUND", "Model $modelName is not downloaded", null)
-                return@AsyncFunction
-            }
+                    if (!modelFile.exists() || modelFile.length() == 0L) {
+                        val errorMsg = "Downloaded model file '$modelName' not found or is empty at ${modelFile.absolutePath}"
+                        Log.e(TAG, "createModelFromDownloaded: $errorMsg")
+                        sendEvent("logging", mapOf("message" to errorMsg))
+                        withContext(Dispatchers.Main) { promise.reject("MODEL_NOT_FOUND", errorMsg, null) }
+                        return@launch
+                    }
 
-            try {
-                val handle = createModelInternal(
-                    modelFile.absolutePath,
-                    maxTokens ?: 1024,
-                    topK ?: 40,
-                    temperature ?: 0.7,
-                    randomSeed ?: 42,
-                    multiModal ?: false
-                )
-                // Explicitly cast to avoid ambiguity
-                promise.resolve(handle as Int)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error creating model from downloaded file: ${e.message}", e)
-                promise.reject("ERR_CREATE_MODEL", "Failed to create model: ${e.message}", e)
+                    val handle = createModelInternal(
+                        modelFile.absolutePath,
+                        maxTokens ?: 1024,
+                        topK ?: 40,
+                        temperature ?: 0.7,
+                        randomSeed ?: 42,
+                        multiModal ?: false
+                    )
+                    // Explicitly cast to avoid ambiguity
+                    promise.resolve(handle as Int)
+                } catch (e: Exception) {
+                    Log.e(TAG, "createModelFromDownloaded: Failed to load model from downloaded file: ${e.message}", e)
+                    sendEvent("logging", mapOf(
+                        "message" to "Failed to load model from downloaded file: ${e.message}"
+                    ))
+                    withContext(Dispatchers.Main) { promise.reject("MODEL_LOAD_FAILED", e.message ?: "Unknown error", e) }
+                }
             }
+            activeJobs.add(job)
+            job.invokeOnCompletion { activeJobs.remove(job) }
         }
     }
 }

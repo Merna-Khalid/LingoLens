@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SELECTED_LANGUAGE_KEY = 'selected_language';
 const SELECTED_LEVEL_KEY = 'selected_level';
@@ -43,17 +44,24 @@ export default function SelectLanguageLevelScreen() {
   const handleProceed = async () => {
     if (selectedLanguage && selectedLevel) {
       console.log(`Selected Language: ${selectedLanguage}, Selected Level: ${selectedLevel}`);
-      await AsyncStorage.setItem(SELECTED_LANGUAGE_KEY, selectedLanguage);
-      await AsyncStorage.setItem(SELECTED_LEVEL_KEY, selectedLevel);
 
-      router.push({
-        pathname: '/main-page', 
-        params: { selectedLanguage: selectedLanguage, selectedLevel: selectedLevel }
-      });
+      try {
+        await AsyncStorage.setItem(SELECTED_LANGUAGE_KEY, selectedLanguage);
+        await AsyncStorage.setItem(SELECTED_LEVEL_KEY, selectedLevel);
+
+        router.push({
+          pathname: '/main-page',
+          params: { selectedLanguage, selectedLevel },
+        });
+      } catch (err) {
+        console.error("❌ Failed to save to AsyncStorage:", err);
+        Alert.alert("Storage Error", "Could not save your selection. Please try again.");
+      }
     } else {
       console.log("Please select a language level.");
     }
   };
+
 
   return (
     <SafeAreaView style={styles.safeArea}>

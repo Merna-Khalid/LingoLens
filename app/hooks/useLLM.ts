@@ -48,7 +48,7 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
   >("not_downloaded");
   const [downloadProgress, setDownloadProgress] = React.useState<number>(0);
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
-  const [isCheckingStatus, setIsCheckingStatus] = React.useState(true); // Initial check for downloaded status
+  const [isCheckingStatus, setIsCheckingStatus] = React.useState(true);
 
   const { modelUrl, modelName, maxTokens, topK, temperature, randomSeed, multiModal } = props;
 
@@ -100,18 +100,19 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
     return () => subscription.remove();
   }, [modelName]);
 
-  // Effect to release model handle when component unmounts or handle changes
-  React.useEffect(() => {
-    const currentModelHandle = modelHandle;
-    return () => {
-      if (currentModelHandle !== undefined) {
-        console.log(`Releasing downloadable model with handle ${currentModelHandle}.`);
-        module.releaseModel(currentModelHandle)
-          .then(() => console.log(`Successfully released model ${currentModelHandle}`))
-          .catch((error) => console.error(`Error releasing model ${currentModelHandle}:`, error));
-      }
-    };
-  }, [modelHandle]);
+// REMOVED: to avoid releasing model after loading
+//   Effect to release model handle when component unmounts or handle changes
+//   React.useEffect(() => {
+//     const currentModelHandle = modelHandle;
+//     return () => {
+//       if (currentModelHandle !== undefined) {
+//         console.log(`Releasing downloadable model with handle ${currentModelHandle}.`);
+//         module.releaseModel(currentModelHandle)
+//           .then(() => console.log(`Successfully released model ${currentModelHandle}`))
+//           .catch((error) => console.error(`Error releasing model ${currentModelHandle}:`, error));
+//       }
+//     };
+//   }, [modelHandle]);
 
   // Download model handler
   const downloadModelHandler = React.useCallback(
@@ -180,10 +181,10 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
   // Delete downloaded model handler
   const deleteDownloadedModelHandler = React.useCallback(async (): Promise<boolean> => {
     try {
-      if (modelHandle !== undefined) {
-        await module.releaseModel(modelHandle);
-        setModelHandle(undefined);
-      }
+//       if (modelHandle !== undefined) {
+//         await module.releaseModel(modelHandle);
+//         setModelHandle(undefined);
+//       }
       const result = await module.deleteDownloadedModel(modelName);
       if (result) {
         setDownloadStatus("not_downloaded");
@@ -220,6 +221,27 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
       throw error;
     }
   }, [modelName]);
+
+  // Release model handler for this hook instance (used by ModelContext)
+   const releaseModelHandler = React.useCallback(async (): Promise<void> => {
+      if (modelHandle === undefined) {
+        console.log("No downloadable model loaded to release from this hook instance.");
+        return;
+      }
+      try {
+        console.log(`Releasing downloadable model explicitly with handle ${modelHandle}.`);
+        await module.releaseModel(modelHandle);
+        setModelHandle(undefined);
+        setIsLoading(false);
+        setLoadError(null);
+      } catch (error) {
+        console.error(`Error explicitly releasing downloadable model ${modelHandle}:`, error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        setLoadError(errorMsg);
+        Alert.alert("Model Release Error", errorMsg);
+        throw error;
+      }
+  }, [modelHandle]);
 
   // Generate response (synchronous)
   const generateResponse = React.useCallback(
@@ -337,11 +359,12 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
     isCheckingStatus,
     cancelDownload: cancelDownloadHandler,
     deleteDownloadedModel: deleteDownloadedModelHandler,
-    modelHandle, // Expose the modelHandle
+    modelHandle,
+    releaseModel: releaseModelHandler,
   }), [
     generateResponse, generateStreamingResponse, modelHandle, isLoading, loadError,
     downloadModelHandler, loadModelHandler, downloadStatus, downloadProgress, downloadError, isCheckingStatus,
-    cancelDownloadHandler, deleteDownloadedModelHandler,
+    cancelDownloadHandler, deleteDownloadedModelHandler, releaseModelHandler,
   ]);
 }
 
@@ -412,22 +435,22 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
     };
   }, [modelIdentifier, storageType, maxTokens, topK, temperature, randomSeed, multiModal]);
 
-  // Effect to release model handle when component unmounts or handle changes
-  React.useEffect(() => {
-    const currentModelHandle = modelHandle;
-    return () => {
-      if (currentModelHandle !== undefined) {
-        console.log(`Releasing base model with handle ${currentModelHandle}.`);
-        module.releaseModel(currentModelHandle)
-          .then(() => console.log(`Successfully released model ${currentModelHandle}`))
-          .catch((error) => console.error(`Error releasing model ${currentModelHandle}:`, error));
-      }
-    };
-  }, [modelHandle]);
+// REMOVED: to be handled by ModelContext
+// Effect to release model handle when component unmounts or handle changes
+//   React.useEffect(() => {
+//     const currentModelHandle = modelHandle;
+//     return () => {
+//       if (currentModelHandle !== undefined) {
+//         console.log(`Releasing base model with handle ${currentModelHandle}.`);
+//         module.releaseModel(currentModelHandle)
+//           .then(() => console.log(`Successfully released model ${currentModelHandle}`))
+//           .catch((error) => console.error(`Error releasing model ${currentModelHandle}:`, error));
+//       }
+//     };
+//   }, [modelHandle]);
 
   // Load model handler (for _useLLMBase, it's essentially the useEffect's creation)
   const loadModelHandler = React.useCallback(async (): Promise<void> => {
-
     if (modelHandle === undefined) {
       const errorMsg = "Base model is not loaded. Check initial useEffect for errors.";
       setLoadError(errorMsg);
@@ -565,8 +588,8 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
     isLoading,
     loadError,
     loadModel: loadModelHandler,
-    releaseModel: releaseModelHandler, // Expose releaseModel
-    modelHandle, // Expose the modelHandle
+    releaseModel: releaseModelHandler,
+    modelHandle,
   }), [
     generateResponse, generateStreamingResponse, modelHandle, isLoading, loadError,
     loadModelHandler, releaseModelHandler,
