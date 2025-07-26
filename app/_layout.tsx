@@ -26,6 +26,7 @@ export default function RootLayout() {
       <ModelProvider>
         <Stack>
           <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="Yes" options={{ headerShown: false }} />
           <Stack.Screen name="initial-page" options={{ headerShown: false }} />
           <Stack.Screen name="select-languages" options={{ headerShown: false }} />
           <Stack.Screen name="select-language-level" options={{ headerShown: false }} />
