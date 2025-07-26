@@ -1,18 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, Image, TextInput, Dimensions, Platform, KeyboardAvoidingView, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
-import { Audio } from 'expo-av';
 import { Recording } from 'expo-audio';
-import * as Speech from 'expo-speech';
-import * as FileSystem from 'expo-file-system';
+import { Audio } from 'expo-av';
 import { requireNativeModule } from 'expo-modules-core';
+import { router, useLocalSearchParams } from 'expo-router';
+import * as Speech from 'expo-speech';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 
 // Get the native module instance
 const LingoProMultimodal = requireNativeModule('LingoproMultimodal');
-
-const { width } = Dimensions.get('window');
 
 // Define chat message interface
 interface ChatMessage {
@@ -48,7 +45,7 @@ export default function ChatScreen() {
 
   const isModelReady = isModelLoaded;
   const [modelLoadError, setModelLoadError] = useState<string | null>(
-      isModelReady ? null : "AI model not loaded. Please go back to setup."
+    isModelReady ? null : "AI model not loaded. Please go back to setup."
   );
 
 

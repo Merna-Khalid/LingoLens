@@ -7,7 +7,7 @@ import type {
   DownloadOptions,
   DownloadProgressEvent,
   ErrorResponseEventPayload,
-  ExpoLlmMediapipeModule as NativeModuleType,
+  ExpoLlmMediapipeModule,
   PartialResponseEventPayload,
   UseLLMAssetProps,
   UseLLMDownloadableProps,
@@ -15,7 +15,7 @@ import type {
   UseLLMProps, // General type for dispatcher
 } from "./LingoproMultiModal.types";
 
-const module = requireNativeModule<NativeModuleType>("ExpoLlmMediapipe");
+const module = requireNativeModule<ExpoLlmMediapipeModule>("LingoproMultimodal");
 
 // Hook Overloads
 export function useLLM(props: UseLLMDownloadableProps): DownloadableLlmReturn;

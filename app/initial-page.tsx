@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, Button, StyleSheet, ScrollView, ActivityIndicator, Alert, Platform, TouchableOpacity } from 'react-native';
+import { useLLM } from '@/modules/lingopro-multimodal-module';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
-import { useLLM } from './hooks/useLLM';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useModel } from './context/ModelContext';
-import { LoggingEventPayload, DownloadableLlmReturn, BaseLlmReturn } from './types/ExpoLlmMediapipe.types';
+
+
+// import { LoggingEventPayload, DownloadableLlmReturn, BaseLlmReturn } from './types/ExpoLlmMediapipe.types';
 
 // Constants for model and file paths
 const DEFAULT_MODEL_NAME = "gemma-3n-E4B-it-int4.task"; // Default downloadable model name
@@ -26,10 +28,11 @@ export default function InitialPage() {
 
   const { setModelHandle, releaseLoadedModel, isModelLoaded: isGlobalModelLoaded } = useModel();
 
+// export type UseLLMDownloadableProps = BaseLlmParams & { modelUrl: string; modelName: string; storageType?: undefined; modelPath?: undefined };
   const defaultDownloadableLLM = useLLM({
-    storageType: 'downloadable',
+    storageType: 'asset',
     modelName: DEFAULT_MODEL_NAME,
-    modelUrl: DEFAULT_MODEL_URL,
+    // modelUrl: DEFAULT_MODEL_URL,
     maxTokens: 2048,
     topK: 50,
     temperature: 0.7,
@@ -67,9 +70,9 @@ export default function InitialPage() {
   }, [addLog]);
 
   // Initial setup: Start by checking the default downloadable model
-//   useEffect(() => {
-//     setActiveModelType('default-downloadable');
-//   }, []);
+  //   useEffect(() => {
+  //     setActiveModelType('default-downloadable');
+  //   }, []);
 
   // Initial setup: Check for existing models first, then default downloadable
   useEffect(() => {
@@ -94,7 +97,7 @@ export default function InitialPage() {
 
         // If no user files, check for the default downloadable model
         const defaultModelInfo = await FileSystem.getInfoAsync(DEFAULT_MODEL_PATH);
-        if (defaultModelInfo.exists && defaultModelInfo.isFile) {
+        if (defaultModelInfo.exists && !defaultModelInfo.isDirectory) {
           addLog(`Found default downloaded model: ${DEFAULT_MODEL_PATH}. Attempting to load.`);
           setActiveModelType('default-downloadable'); // This will trigger defaultDownloadableLLM to load
           return; // Exit, as we are attempting to load the default model
@@ -130,10 +133,10 @@ export default function InitialPage() {
     // Determine which LLM's state to observe
     const llmToObserve = activeModelType === 'default-downloadable' ? defaultDownloadableLLM : userFileLLM;
 
-    addLog(`[UI State Logic] Active Model Type: ${activeModelType}, isLoaded: ${llmToObserve.isLoaded}, isLoading: ${llmToObserve.isLoading}, loadError: ${llmToObserve.loadError}`);
-    if (activeModelType === 'default-downloadable') {
-        const downloadable = llmToObserve as DownloadableLlmReturn;
-        addLog(`[UI State Logic - Downloadable] isCheckingStatus: ${downloadable.isCheckingStatus}, downloadStatus: ${downloadable.downloadStatus}, downloadError: ${downloadable.downloadError}`);
+    // addLog(`[UI State Logic] Active Model Type: ${activeModelType}, isLoaded: ${llmToObserve.isLoaded}, isLoading: ${llmToObserve.isLoading}, loadError: ${llmToObserve.loadError}`);
+    if (activeModelType === "default-downloadable") {
+      const downloadable = llmToObserve;
+      // addLog(`[UI State Logic - Downloadable] isCheckingStatus: ${downloadable.isCheckingStatus}, downloadStatus: ${downloadable.downloadStatus}, downloadError: ${downloadable.downloadError}`);
     }
 
 
@@ -181,7 +184,7 @@ export default function InitialPage() {
       // or there was an issue with the path.
       setAppUIState('options'); // Go back to options for user to retry or select another
     } else {
-        setAppUIState('options'); // Fallback
+      setAppUIState('options'); // Fallback
     }
 
   }, [
@@ -219,16 +222,16 @@ export default function InitialPage() {
       // Ensure the target directory exists
       const dirInfo = await FileSystem.getInfoAsync(USER_FILES_DIR);
       if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(USER_FILES_DIR, { intermediates: true });
-          addLog("Created user files directory for file copy.");
+        await FileSystem.makeDirectoryAsync(USER_FILES_DIR, { intermediates: true });
+        addLog("Created user files directory for file copy.");
       }
 
       const targetFilePath = `${USER_FILES_DIR}${file.name}`;
       addLog(`Copying selected file to ${targetFilePath}...`);
 
       await FileSystem.copyAsync({
-          from: file.uri,
-          to: targetFilePath,
+        from: file.uri,
+        to: targetFilePath,
       });
       addLog("File copied successfully. Now setting LLM props to load this file via hook.");
 
@@ -258,12 +261,12 @@ export default function InitialPage() {
 
   // Handler for initiating default model download
   const handleDownloadDefaultModel = useCallback(() => {
-      setActiveModelType('default-downloadable');
-      if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'not_downloaded' || (defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'error') {
-          (defaultDownloadableLLM as DownloadableLlmReturn).downloadModel();
-      } else if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'downloaded' && !defaultDownloadableLLM.isLoaded) {
-          (defaultDownloadableLLM as DownloadableLlmReturn).loadModel();
-      }
+    setActiveModelType('default-downloadable');
+    if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'not_downloaded' || (defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'error') {
+      (defaultDownloadableLLM as DownloadableLlmReturn).downloadModel();
+    } else if ((defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'downloaded' && !defaultDownloadableLLM.isLoaded) {
+      (defaultDownloadableLLM as DownloadableLlmReturn).loadModel();
+    }
   }, [defaultDownloadableLLM]);
 
 
@@ -314,7 +317,7 @@ export default function InitialPage() {
         <Text style={styles.statusText}>Current State: <Text style={styles.statusValue}>{appUIState.toUpperCase()}</Text></Text>
         <Text style={styles.statusText}>Model Loaded: <Text style={styles.statusValue}>{currentLLM.isLoaded ? 'Yes' : 'No'}</Text></Text>
         {activeModelType === 'default-downloadable' && (
-            <Text style={styles.statusText}>Default Downloaded: <Text style={styles.statusValue}>{getDownloadStatusForDisplay() === 'downloaded' ? 'Yes' : 'No'}</Text></Text>
+          <Text style={styles.statusText}>Default Downloaded: <Text style={styles.statusValue}>{getDownloadStatusForDisplay() === 'downloaded' ? 'Yes' : 'No'}</Text></Text>
         )}
 
         {appUIState === 'options' && (
@@ -382,9 +385,9 @@ export default function InitialPage() {
                   // For user-file errors, prompt user to re-select
                   Alert.alert("Retry File Load", "Please try selecting the file again.");
                   setUserFileModelPath(null); // Clear path to allow re-selection
-                  setActiveModelType('options'); // Go back to options
+                  // setActiveModelType('options'); // Go back to options
                 } else {
-                    setActiveModelType('options'); // General retry, go back to options
+                  // setActiveModelType('options'); // General retry, go back to options
                 }
               }}
             >
@@ -394,7 +397,7 @@ export default function InitialPage() {
         )}
 
         {/* Release Button - only show if a model is currently loaded */}
-        {currentLLM.isLoaded && appUIState !== 'checking' && appUIState !== 'loading' && appUIState !== 'downloading' && (
+        {/* {currentLLM.isLoaded && appUIState !== 'checking' && appUIState !== 'loading' && appUIState !== 'downloading' && (
           <TouchableOpacity
             style={styles.releaseButton}
             onPress={async () => {
@@ -403,7 +406,8 @@ export default function InitialPage() {
                 "Are you sure you want to release the currently loaded model? This will unload it from memory.",
                 [
                   { text: "Cancel", style: "cancel" },
-                  { text: "Release", onPress: async () => {
+                  {
+                    text: "Release", onPress: async () => {
                       try {
                         // Release the currently active model via its hook instance
                         await currentLLM.releaseModel();
@@ -411,33 +415,37 @@ export default function InitialPage() {
 
                         // If the released model was the default downloadable one, offer to delete its file
                         if (activeModelType === 'default-downloadable' && (defaultDownloadableLLM as DownloadableLlmReturn).downloadStatus === 'downloaded') {
-                            Alert.alert(
-                                "Delete Default Model File?",
-                                "Do you also want to delete the default downloaded model file from storage?",
-                                [
-                                    { text: "No", style: "cancel", onPress: () => {
-                                        setActiveModelType('options'); // Go back to options
-                                        setUserFileModelPath(null); // Clear user file path just in case
-                                    }},
-                                    { text: "Yes", onPress: async () => {
-                                        try {
-                                            await (defaultDownloadableLLM as DownloadableLlmReturn).deleteDownloadedModel(); // Delete the default model file
-                                            addLog("Default downloaded model file deleted.");
-                                            setActiveModelType('options');
-                                            setUserFileModelPath(null);
-                                        } catch (e: any) {
-                                            addLog(`Error deleting default model file: ${e.message}`);
-                                            Alert.alert("Deletion Error", `Failed to delete default model file: ${e.message}`);
-                                            setActiveModelType('options'); // Still go to options even if deletion fails
-                                            setUserFileModelPath(null);
-                                        }
-                                    }}
-                                ]
-                            );
+                          Alert.alert(
+                            "Delete Default Model File?",
+                            "Do you also want to delete the default downloaded model file from storage?",
+                            [
+                              {
+                                text: "No", style: "cancel", onPress: () => {
+                                  setActiveModelType('options'); // Go back to options
+                                  setUserFileModelPath(null); // Clear user file path just in case
+                                }
+                              },
+                              {
+                                text: "Yes", onPress: async () => {
+                                  try {
+                                    await (defaultDownloadableLLM as DownloadableLlmReturn).deleteDownloadedModel(); // Delete the default model file
+                                    addLog("Default downloaded model file deleted.");
+                                    setActiveModelType('options');
+                                    setUserFileModelPath(null);
+                                  } catch (e: any) {
+                                    addLog(`Error deleting default model file: ${e.message}`);
+                                    Alert.alert("Deletion Error", `Failed to delete default model file: ${e.message}`);
+                                    setActiveModelType('options'); // Still go to options even if deletion fails
+                                    setUserFileModelPath(null);
+                                  }
+                                }
+                              }
+                            ]
+                          );
                         } else {
-                            // If it was a user-selected file or not a downloaded default, just go to options
-                            setActiveModelType('options');
-                            setUserFileModelPath(null); // Clear user file path
+                          // If it was a user-selected file or not a downloaded default, just go to options
+                          setActiveModelType('options');
+                          setUserFileModelPath(null); // Clear user file path
                         }
                       } catch (e: any) {
                         addLog(`Error during model release: ${e.message}`);
@@ -445,7 +453,8 @@ export default function InitialPage() {
                         setActiveModelType('options'); // Still go to options on error
                         setUserFileModelPath(null);
                       }
-                  }}
+                    }
+                  }
                 ]
               );
             }}
@@ -453,7 +462,7 @@ export default function InitialPage() {
           >
             <Text style={styles.releaseButtonText}>Release Loaded Model</Text>
           </TouchableOpacity>
-        )}
+        )} */}
       </View>
 
       <View style={styles.sectionCard}>
