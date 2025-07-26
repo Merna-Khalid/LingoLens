@@ -1,10 +1,15 @@
-/**
- * This file contains the types for the LingoproMultimodal native module.
- * It defines the interfaces for the module's functions, events, and any
- * data structures used in communication between JavaScript and native code.
- */
+export type OnLoadEventPayload = {
+  url: string;
+};
 
-// Event payload interfaces (matching native event structures)
+export type ExpoLlmMediapipeModuleEvents = {
+  onChange: (params: ChangeEventPayload) => void;
+  onPartialResponse: (params: PartialResponseEventPayload) => void;
+  onErrorResponse: (params: ErrorResponseEventPayload) => void;
+  logging: (params: LoggingEventPayload) => void;
+  downloadProgress: (params: DownloadProgressEvent) => void;
+};
+
 export type ChangeEventPayload = {
   value: string;
 };
@@ -22,8 +27,21 @@ export type ErrorResponseEventPayload = {
 };
 
 export type LoggingEventPayload = {
-  handle?: number; // Handle is optional for general logging messages
+  handle: number;
   message: string;
+};
+
+// LLM Types and Hook
+type LlmModelLocation =
+  | { storageType: "asset"; modelName: string }
+  | { storageType: "file"; modelPath: string };
+
+export type LlmInferenceConfig = LlmModelLocation & {
+  maxTokens?: number;
+  topK?: number;
+  temperature?: number;
+  randomSeed?: number;
+  multiModal?: boolean;
 };
 
 export interface DownloadProgressEvent {
@@ -31,37 +49,83 @@ export interface DownloadProgressEvent {
   url?: string;
   bytesDownloaded?: number;
   totalBytes?: number;
-  progress: number; // 0.0 to 1.0
+  progress?: number;
   status: "downloading" | "completed" | "error" | "cancelled";
-  error?: string; // Only present if status is 'error'
+  error?: string;
 }
 
-// Union type for all possible native module events
-export type LingoproMultimodalModuleEvents = {
-  onChange: (params: ChangeEventPayload) => void;
-  onPartialResponse: (params: PartialResponseEventPayload) => void;
-  onErrorResponse: (params: ErrorResponseEventPayload) => void;
-  logging: (params: LoggingEventPayload) => void;
-  downloadProgress: (params: DownloadProgressEvent) => void;
-};
-
-// Options for model download
 export interface DownloadOptions {
   overwrite?: boolean;
   timeout?: number;
   headers?: Record<string, string>;
 }
 
-// Interface for the LingoproMultimodal native module's functions
-export interface LingoproMultimodalModule {
+type BaseLlmParams = {
+  maxTokens?: number;
+  topK?: number;
+  temperature?: number;
+  randomSeed?: number;
+  multiModal?: boolean;
+};
+
+/**
+ * Props for the `useLLM` hook.
+ * - If `modelUrl` is provided, `modelName` is also required for downloadable models.
+ * - Otherwise, `storageType` and either `modelName` (for assets) or `modelPath` (for files) are required.
+ */
+// This existing UseLLMProps is a good union type for the implementation signature.
+export type UseLLMProps = BaseLlmParams & (
+  | { modelUrl?: undefined; storageType: "asset"; modelName: string; modelPath?: undefined }
+  | { modelUrl?: undefined; storageType: "file"; modelPath: string; modelName?: undefined }
+  | { modelUrl: string; modelName: string; storageType?: undefined; modelPath?: undefined }
+);
+
+// Specific prop types for hook overloads
+export type UseLLMAssetProps = BaseLlmParams & { modelUrl?: undefined; storageType: "asset"; modelName: string; modelPath?: undefined };
+export type UseLLMFileProps = BaseLlmParams & { modelUrl?: undefined; storageType: "file"; modelPath: string; modelName?: undefined };
+export type UseLLMDownloadableProps = BaseLlmParams & { modelUrl: string; modelName: string; storageType?: undefined; modelPath?: undefined };
+
+
+// Return types for the useLLM hook
+export interface BaseLlmReturn {
+  generateResponse: (
+    promptText: string,
+    imagePath: string,
+    onPartial?: (partial: string, reqId: number | undefined) => void,
+    onErrorCb?: (message: string, reqId: number | undefined) => void,
+    abortSignal?: AbortSignal
+  ) => Promise<string>;
+  generateStreamingResponse: (
+    promptText: string,
+    onPartial?: (partial: string, reqId: number) => void,
+    onErrorCb?: (message: string, reqId: number) => void,
+    abortSignal?: AbortSignal
+  ) => Promise<void>;
+  isLoaded: boolean;
+}
+
+export interface DownloadableLlmReturn extends BaseLlmReturn {
+  downloadModel: (options?: DownloadOptions) => Promise<boolean>;
+  loadModel: () => Promise<void>;
+  downloadStatus: "not_downloaded" | "downloading" | "downloaded" | "error";
+  downloadProgress: number;
+  downloadError: string | null;
+  isCheckingStatus: boolean;
+}
+
+export interface NativeModuleSubscription {
+  remove(): void;
+}
+
+export interface ExpoLlmMediapipeModule {
   /**
    * Creates a model from a file path.
    * @param modelPath - The path to the model file.
    * @param maxTokens - The maximum number of tokens to generate.
    * @param topK - The number of top tokens to consider.
    * @param temperature - The temperature for sampling.
-   * @param randomSeed - The random seed for reproducibility (Int in Kotlin, so number in TS).
-   * @param multiModal - Multimodal flag for model.
+   * @param randomSeed - The random seed for reproducibility.
+   * @param multimodal - multimodal flag for model
    * @returns A promise that resolves to the model handle.
    */
   createModel(
@@ -79,8 +143,8 @@ export interface LingoproMultimodalModule {
    * @param maxTokens - The maximum number of tokens to generate.
    * @param topK - The number of top tokens to consider.
    * @param temperature - The temperature for sampling.
-   * @param randomSeed - The random seed for reproducibility (Int in Kotlin, so number in TS).
-   * @param multiModal - Multimodal flag for model.
+   * @param randomSeed - The random seed for reproducibility.
+   * @param multimodal - multimodal flag for model
    * @returns A promise that resolves to the model handle.
    */
   createModelFromAsset(
@@ -91,12 +155,6 @@ export interface LingoproMultimodalModule {
     randomSeed: number,
     multiModal: boolean,
   ): Promise<number>;
-
-  /**
-   * Releases the resources associated with a loaded model.
-   * @param handle - The model handle.
-   * @returns A promise that resolves to true if the model was successfully released.
-   */
   releaseModel(handle: number): Promise<boolean>;
 
   /**
@@ -104,7 +162,6 @@ export interface LingoproMultimodalModule {
    * @param handle - The model handle.
    * @param requestId - The unique request identifier.
    * @param prompt - The input prompt for the model.
-   * @param imagePath - The path to the image for multimodal input.
    * @returns A promise that resolves to the generated response.
    */
   generateResponse(
@@ -119,7 +176,6 @@ export interface LingoproMultimodalModule {
    * @param handle - The model handle.
    * @param requestId - The unique request identifier.
    * @param prompt - The input prompt for the model.
-   * @param imagePath - The path to the image for multimodal input.
    * @returns A promise that resolves to a boolean indicating success or failure.
    */
   generateResponseAsync(
@@ -175,8 +231,8 @@ export interface LingoproMultimodalModule {
    * @param maxTokens - The maximum number of tokens to generate.
    * @param topK - The number of top tokens to consider.
    * @param temperature - The temperature for sampling.
-   * @param randomSeed - The random seed for reproducibility (Int in Kotlin, so number in TS).
-   * @param multiModal - Multimodal flag for model.
+   * @param randomSeed - The random seed for reproducibility.
+   * @param multiModal - The random seed for reproducibility.
    * @returns A promise that resolves to the model handle.
    */
   createModelFromDownloaded(
@@ -194,8 +250,15 @@ export interface LingoproMultimodalModule {
    * @param listener - The callback function to execute when the event occurs.
    * @returns A subscription object to manage the listener.
    */
-  addListener<EventName extends keyof LingoproMultimodalModuleEvents>(
+  addListener<EventName extends keyof ExpoLlmMediapipeModuleEvents>(
     eventName: EventName,
-    listener: LingoproMultimodalModuleEvents[EventName],
-  ): { remove(): void }; // Simplified NativeModuleSubscription
+    listener: ExpoLlmMediapipeModuleEvents[EventName],
+  ): NativeModuleSubscription;
+
+  /**
+   * Removes all listeners for a specific event.
+   * @param event - The name of the event to remove listeners for.
+   * @returns A promise that resolves when all listeners have been removed.
+   */
+  removeAllListeners(event: keyof ExpoLlmMediapipeModuleEvents): void;
 }
