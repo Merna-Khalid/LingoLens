@@ -1,9 +1,5 @@
-// app/context/ModelContext.tsx
-
-// import { requireNativeModule } from 'expo-modules-core';
 import React, { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 import { Alert } from 'react-native';
-// const LingoProMultimodal = requireNativeModule('LingoproMultimodal');
 import LingoProMultimodal from 'lingopro-multimodal-module';
 
 // Define the shape of the context value
