@@ -1,4 +1,6 @@
 import { AudioRecorder, RecorderState, setAudioModeAsync, RecordingPresets, useAudioRecorder, useAudioRecorderState, AudioModule, useAudioPlayer } from "expo-audio";
+import Icon from 'react-native-vector-icons/Ionicons';
+
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import React, { useEffect, useRef, useState } from 'react';
@@ -310,7 +312,9 @@ export default function ChatScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>←</Text>
+          {/* <Text style={styles.backButtonText}>←</Text> */}
+          <Icon name="arrow-back" size={24} color="#000" />
+
         </TouchableOpacity>
         <Text style={styles.headerTitle}>AI Chat</Text>
         <TouchableOpacity style={styles.shareButton}>
