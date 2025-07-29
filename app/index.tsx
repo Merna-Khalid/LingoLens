@@ -1,7 +1,8 @@
 // app/index.tsx
 import { Redirect } from 'expo-router';
 
+
 export default function Index() {
-  // return <Redirect href="/initial-page" />;
-  return <Redirect href="/Yes" />;
+  return <Redirect href="/initial-page" />;
+  // return <Redirect href="/Yes" />;
 }

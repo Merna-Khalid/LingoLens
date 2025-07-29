@@ -13,20 +13,29 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.BufferedInputStream
+import java.util.UUID
 
-import expo.modules.lingopromultimodalmodule.LlmInferenceModel
-import expo.modules.lingopromultimodalmodule.InferenceListener
+// import expo.modules.lingopromultimodalmodule.LlmInferenceModel
+// import expo.modules.lingopromultimodalmodule.InferenceListener
+// import expo.modules.lingopromultimodalmodule.DatabaseHelper
 
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
 private const val DOWNLOAD_DIRECTORY = "llm_models"
 
 private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 private var activeJobs: MutableList<Job> = mutableListOf()
+private var activeModelHandle: Int? = null
 
 class LingoproMultimodalModule : Module() {
     private var nextHandle = 1
     private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
+
+    private val activeDownloads = mutableMapOf<String, Job>()
+    private val dbHelper by lazy {
+        DatabaseHelper(appContext.reactContext!!)
+    }
 
     // Define these functions at class level, not in the definition block
     private fun createInferenceListener(modelHandle: Int): InferenceListener {
@@ -148,10 +157,262 @@ class LingoproMultimodalModule : Module() {
             inferenceListener = createInferenceListener(modelHandle)
         )
         modelMap[modelHandle] = model
+        activeModelHandle = modelHandle
         return modelHandle
     }
 
-    private val activeDownloads = mutableMapOf<String, Job>()
+    // ---------------------------- HELPER FUNCTIONS -------------------------------------------
+
+    private fun wordToJson(word: Word): JSONObject {
+        return JSONObject().apply {
+            put("id", word.id)
+            put("language", word.language)
+            put("word", word.word)
+            put("meaning", word.meaning)
+            put("writing", word.writing)
+            put("wordType", word.wordType)
+            put("category1", word.category1)
+            put("category2", word.category2)
+            put("phonetics", word.phonetics)
+            put("tags", JSONArray(word.tags))
+        }
+    }
+
+    private fun cardToJson(card: SrsCard): JSONObject {
+        return JSONObject().apply {
+            put("id", card.id)
+            put("wordId", card.wordId)
+            put("language", card.language)
+            put("dueDate", card.dueDate)
+            put("interval", card.interval)
+            put("repetitions", card.repetitions)
+            put("easeFactor", card.easeFactor)
+            put("isBuried", card.isBuried)
+            put("deckLevel", card.deckLevel)
+        }
+    }
+
+    // ---------------------------- DATABASE TOOLS ---------------------------------------------
+    private fun createToolDefinition(
+        name: String,
+        description: String,
+        properties: JSONObject,
+        required: List<String> = emptyList()
+    ): JSONObject {
+        return JSONObject().apply {
+            put("name", name)
+            put("description", description)
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", properties)
+                put("required", JSONArray(required))
+            })
+        }
+    }
+
+    private val wordProperties = JSONObject().apply {
+        put("language", JSONObject().apply { put("type", "string") })
+        put("word", JSONObject().apply { put("type", "string") })
+        put("meaning", JSONObject().apply { put("type", "string") })
+        put("writing", JSONObject().apply { put("type", "string") })
+        put("wordType", JSONObject().apply { put("type", "string") })
+        put("category1", JSONObject().apply { put("type", "string") })
+        put("category2", JSONObject().apply { put("type", "string") })
+        put("phonetics", JSONObject().apply { put("type", "string") })
+        put("tags", JSONObject().apply {
+            put("type", "array")
+            put("items", JSONObject().apply { put("type", "string") })
+        })
+    }
+
+    private val requiredWordFields = listOf(
+        "language", "word", "meaning", "writing", "wordType", "category1"
+    )
+    // Tool definitions (model-friendly format)
+    private val availableTools = listOf(
+        createToolDefinition(
+            name = "insertWord",
+            description = "Save a single word to the database",
+            properties = wordProperties,
+            required = requiredWordFields
+        ),
+        createToolDefinition(
+            name = "bulkInsertWords",
+            description = "Insert a list of words into the database",
+            properties = JSONObject().apply {
+                put("words", JSONObject().apply {
+                    put("type", "array")
+                    put("items", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", wordProperties)
+                        put("required", JSONArray(requiredWordFields))
+                    })
+                })
+            },
+            required = listOf("words")
+        ),
+        createToolDefinition(
+            name = "getWordsByLanguage",
+            description = "Fetch all words for a given language",
+            properties = JSONObject().apply {
+                put("language", JSONObject().apply { put("type", "string") })
+            },
+            required = listOf("language")
+        ),
+        createToolDefinition(
+            name = "getNounsByCategory",
+            description = "Fetch all nouns by category for a given language",
+            properties = JSONObject().apply {
+                put("language", JSONObject().apply { put("type", "string") })
+                put("category1", JSONObject().apply { put("type", "string") })
+            },
+            required = listOf("language", "category1")
+        ),
+        createToolDefinition(
+            name = "getWordsBySubcategory",
+            description = "Fetch words by subcategory for a given language",
+            properties = JSONObject().apply {
+                put("language", JSONObject().apply { put("type", "string") })
+                put("category2", JSONObject().apply { put("type", "string") })
+            },
+            required = listOf("language", "category2")
+        ),
+        createToolDefinition(
+            name = "getWordsByTag",
+            description = "Fetch words by tag for a given language",
+            properties = JSONObject().apply {
+                put("language", JSONObject().apply { put("type", "string") })
+                put("tag", JSONObject().apply { put("type", "string") })
+            },
+            required = listOf("language", "tag")
+        )
+    )
+
+
+    private fun parseToolCalls(response: String): List<JSONObject> {
+        return try {
+            val json = JSONObject(response)
+            if (json.has("tools")) {
+                json.getJSONArray("tools").let { array ->
+                    (0 until array.length()).map { array.getJSONObject(it) }
+                }
+            } else emptyList()
+        } catch (e: Exception) {
+            emptyList() // Not a tool call
+        }
+    }
+
+    private fun executeTool(toolCall: JSONObject): JSONObject {
+        return try {
+            val toolName = toolCall.getString("name")
+            val params = toolCall.getJSONObject("parameters")
+
+            when (toolName) {
+                "insertWord" -> {
+                    JSONObject().apply {
+                        put("success", dbHelper.insertWord(
+                            language = params.getString("language"),
+                            word = params.getString("word"),
+                            meaning = params.getString("meaning"),
+                            writing = params.getString("writing"),
+                            wordType = params.getString("wordType"),
+                            category1 = params.getString("category1"),
+                            category2 = params.optString("category2"),
+                            phonetics = params.optString("phonetics"),
+                            tags = params.optJSONArray("tags")?.let { parseTags(it) }
+                        ) != -1L)
+                    }
+                }
+                "bulkInsertWords" -> {
+                    val wordsArray = params.getJSONArray("words")
+                    val words = (0 until wordsArray.length()).map { i ->
+                        val wordObj = wordsArray.getJSONObject(i)
+                        wordObj.getString("word") to wordObj.getString("meaning")
+                    }
+                    JSONObject().apply {
+                        put("success", dbHelper.bulkInsertCards(
+                            words,
+                            wordsArray.getJSONObject(0).getString("language"),
+                            wordsArray.getJSONObject(0).optString("category1", "general"),
+                            "default"
+                        ).isNotEmpty())
+                    }
+                }
+                "getWordsByLanguage" -> {
+                    JSONObject().apply {
+                        put("words", JSONArray(dbHelper.getWordsByLanguage(
+                            params.getString("language")
+                        )))
+                    }
+                }
+                "getNounsByCategory" -> {
+                    JSONObject().apply {
+                        put("words", JSONArray(dbHelper.getNounsByCategory(
+                            params.getString("language"),
+                            params.getString("category1")
+                        )))
+                    }
+                }
+                "getWordsBySubcategory" -> {
+                    JSONObject().apply {
+                        put("words", JSONArray(dbHelper.getWordsBySubcategory(
+                            params.getString("language"),
+                            params.getString("category2")
+                        )))
+                    }
+                }
+                "getWordsByTag" -> {
+                    JSONObject().apply {
+                        put("words", JSONArray(dbHelper.getWordsByTag(
+                            params.getString("language"),
+                            params.getString("tag")
+                        )))
+                    }
+                }
+                else -> JSONObject().apply {
+                    put("error", "Tool not implemented")
+                    put("tool", toolName)
+                }
+            }
+        } catch (e: Exception) {
+            JSONObject().apply {
+                put("error", "Tool execution failed")
+                put("message", e.message)
+                put("exception", e::class.simpleName)
+            }
+        }
+    }
+
+    private fun parseTags(jsonArray: JSONArray): List<String> {
+        return try {
+            (0 until jsonArray.length()).mapNotNull { i ->
+                try {
+                    jsonArray.getString(i)
+                } catch (e: Exception) {
+                    null // Skip invalid tag entries
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun parseWordsFromResponse(response: String): List<Pair<String, String>> {
+        return try {
+            JSONArray(response).let { array ->
+                (0 until array.length()).map {
+                    val item = array.getJSONObject(it)
+                    Pair(
+                        item.getString("word"),
+                        item.getString("meaning")
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Failed to parse model response", e)
+        }
+    }
+
 
     override fun definition() = ModuleDefinition {
         Name("LingoproMultimodal") // Corrected native module name to LingoproMultimodal
@@ -159,6 +420,260 @@ class LingoproMultimodalModule : Module() {
         Constants(
             "PI" to Math.PI
         )
+
+        // ---------------------------- DATABASE MANAGEMENT ----------------------------------------
+
+        AsyncFunction("initializeDatabase") { promise: Promise ->
+            try {
+                dbHelper.forceInitializeDatabase()
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("DB_INIT_ERROR", e.message, e)
+            }
+        }
+
+        AsyncFunction("isDatabaseInitialized") { promise: Promise ->
+            try {
+                promise.resolve(dbHelper.isDatabaseInitialized())
+            } catch (e: Exception) {
+                promise.reject("DB_CHECK_ERROR", e.message, e)
+            }
+        }
+
+        // CRUD operations Words
+
+        AsyncFunction("insertWord") { params: Map<String, Any>, promise: Promise ->
+            try {
+                val id = dbHelper.insertWord(
+                    language = params["language"] as String,
+                    word = params["word"] as String,
+                    meaning = params["meaning"] as String,
+                    writing = params["writing"] as? String ?: params["word"] as String,
+                    wordType = params["wordType"] as? String ?: "noun",
+                    category1 = params["category1"] as String,
+                    category2 = params["category2"] as? String,
+                    phonetics = params["phonetics"] as? String,
+                    tags = (params["tags"] as? List<*>)?.filterIsInstance<String>()
+                )
+                promise.resolve(id != -1L)
+            } catch (e: Exception) {
+                promise.reject("DB_INSERT_ERROR", "Failed to insert word", e)
+            }
+        }
+
+        AsyncFunction("bulkInsertWords") { words: List<Map<String, Any>>, promise: Promise ->
+            try {
+                val success = dbHelper.bulkInsertCards(
+                    words.map { it["word"] as String to it["meaning"] as String },
+                    words.firstOrNull()?.get("language") as? String ?: "en",
+                    words.firstOrNull()?.get("category1") as? String ?: "general",
+                    "default"
+                )
+                promise.resolve(success.isNotEmpty())
+            } catch (e: Exception) {
+                promise.reject("DB_BULK_INSERT_ERROR", "Bulk insert failed", e)
+            }
+        }
+
+        AsyncFunction("getAllWords") { promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getAllWords().map { wordToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("DB_QUERY_ERROR", "Failed to get words", e)
+            }
+        }
+
+        AsyncFunction("getWordsByLanguage") { language: String, promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getWordsByLanguage(language).map { wordToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("DB_QUERY_ERROR", "Failed to get words by language", e)
+            }
+        }
+
+        AsyncFunction("getNounsByCategory") { language: String, category: String, promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getNounsByCategory(language, category).map { wordToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("DB_QUERY_ERROR", "Failed to get nouns by category", e)
+            }
+        }
+
+        AsyncFunction("getWordsBySubcategory") { language: String, category: String, promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getWordsBySubcategory(language, category).map { wordToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("DB_QUERY_ERROR", "Failed to get words by subcategory", e)
+            }
+        }
+
+        AsyncFunction("getWordsByTag") { language: String, tag: String, promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getWordsByTag(language, tag).map { wordToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("DB_QUERY_ERROR", "Failed to get words by tag", e)
+            }
+        }
+
+        // CRUD operations Cards
+        AsyncFunction("addToSRS") { wordId: Long, deckLevel: String, promise: Promise ->
+            try {
+                val card = dbHelper.addToSRS(wordId, "en", deckLevel) // Added default language
+                promise.resolve(cardToJson(card))
+            } catch (e: Exception) {
+                promise.reject("SRS_ERROR", "Failed to add to SRS", e)
+            }
+        }
+
+        AsyncFunction("getDueCards") { language: String, promise: Promise ->
+            try {
+                promise.resolve(dbHelper.getDueCards(language).map { cardToJson(it) })
+            } catch (e: Exception) {
+                promise.reject("SRS_ERROR", "Failed to get due cards", e)
+            }
+        }
+
+        AsyncFunction("logReview") { cardId: Long, quality: Int, promise: Promise ->
+            try {
+                if (quality !in 0..5) throw IllegalArgumentException("Quality must be 0-5")
+                val updatedCard = dbHelper.logReview(cardId, quality)
+                promise.resolve(cardToJson(updatedCard))
+            } catch (e: Exception) {
+                promise.reject("REVIEW_ERROR", "Failed to log review", e)
+            }
+        }
+
+
+
+        // ---------------------------- DATABASE MANAGEMENT END ------------------------------------
+
+
+
+
+        AsyncFunction("generateTopicCards") { params: Map<String, Any>, promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val topic = params["topic"] as String
+                    val language = params["language"] as String
+                    val count = (params["count"] as? Number)?.toInt() ?: 5
+                    val deckLevel = params["deckLevel"] as? String ?: "default"
+
+                    if (count !in 1..20) throw IllegalArgumentException("Count must be 1-20")
+
+                    val model = activeModelHandle?.let { modelMap[it] }
+                        ?: throw IllegalStateException("No model loaded")
+
+                    val prompt = """
+                    Generate $count basic $language vocabulary words about $topic.
+                    For each word, provide its translation and a short example sentence.
+                    Return as JSON: {
+                        "words": [
+                            {
+                                "word": "...",
+                                "meaning": "...",
+                                "example": "..."
+                            }
+                        ]
+                    }
+                """.trimIndent()
+
+                    val response =
+                        model.generateResponse(0, prompt, "") // Blocking call for simplicity
+                    val jsonResponse = JSONObject(response)
+                    val wordsArray = jsonResponse.getJSONArray("words")
+
+                    val words = mutableListOf<Pair<String, String>>()
+                    val examples = mutableListOf<String>()
+
+                    for (i in 0 until wordsArray.length()) {
+                        val item = wordsArray.getJSONObject(i)
+                        words.add(item.getString("word") to item.getString("meaning"))
+                        examples.add(item.getString("example"))
+                    }
+
+                    val cards = dbHelper.bulkInsertCards(words, language, topic, deckLevel)
+                    val (content, translation) = dbHelper.generateContextualContent(
+                        words.map { it.first },
+                        language,
+                        topic
+                    )
+
+                    promise.resolve(JSONObject().apply {
+                        put("cards", JSONArray(cards.map { cardToJson(it) }))
+                        put("content", content)
+                        put("translation", translation)
+                        put("examples", JSONArray(examples))
+                    })
+
+                } catch (e: Exception) {
+                    promise.reject("CARD_GEN_ERROR", "Failed to generate topic cards", e)
+                }
+            }
+        }
+
+
+        AsyncFunction("getRecommendedTopics") { language: String, count: Int, promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // 1. First try to get from database
+                    val dbTopics = dbHelper.getRecommendedTopics(language)
+
+                    // 2. If we don't have enough, generate via LLM
+                    val finalTopics = if (dbTopics.size >= count) {
+                        dbTopics.take(count)
+                    } else {
+                        val model = activeModelHandle?.let { modelMap[it] }
+                            ?: throw IllegalStateException("No model loaded")
+
+                        val prompt = """
+                    Suggest $count common vocabulary topics for learning $language.
+                    Return ONLY a JSON array like: ["family","food"].
+                    Exclude any explanations or additional text.
+                """.trimIndent()
+                        Log.d(TAG, "Before Model")
+                        val response = model.generateResponse(0, prompt, "")
+                        Log.d(TAG, "After Model")
+                        val llmTopics = try {
+                            JSONArray(response).let { array ->
+                                (0 until array.length()).map { array.getString(it) }
+                            }
+                        } catch (e: Exception) {
+                            emptyList<String>()
+                        }
+
+                        (dbTopics + llmTopics).distinct().take(count)
+                    }
+
+                    // 3. Fallback if everything fails
+                    promise.resolve(JSONArray(
+                        finalTopics.ifEmpty { listOf("basics", "greetings", "food", "travel", "numbers") }
+                    ))
+                } catch (e: Exception) {
+                    promise.reject("TOPIC_ERROR", "Failed to get recommended topics", e)
+                }
+            }
+        }
+
+        AsyncFunction("getTopicPreview") { topic: String, language: String, promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val words = dbHelper.getNounsByCategory(language, topic).take(5)
+                    val wordCount = dbHelper.getWordCountByCategory(language, topic)
+
+                    promise.resolve(JSONObject().apply {
+                        put("topic", topic)
+                        put("wordCount", wordCount)
+                        put("exampleWords", JSONArray(words.map { it.word }))
+                        put("totalWords", wordCount)
+                    })
+                } catch (e: Exception) {
+                    promise.reject("TOPIC_ERROR", "Failed to get topic preview", e)
+                }
+            }
+        }
+
+
+        // ---------------------------- DATABASE TOOLS END -----------------------------------------
 
         Events("onChange", "onPartialResponse", "onErrorResponse", "logging", "downloadProgress")
 
@@ -304,20 +819,51 @@ class LingoproMultimodalModule : Module() {
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val model = modelMap[handle]
-                    if (model == null) {
-                        promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                    val model = modelMap[handle] ?: run {
+                        promise.reject("INVALID_HANDLE", "Model not found", null)
                         return@launch
                     }
+
 
                     sendEvent("logging", mapOf(
                         "handle" to handle,
                         "message" to "Generating response with prompt: ${prompt.take(30)}..."
                     ))
 
-                    // Use the synchronous version
-                    val response = model.generateResponse(requestId, prompt, imagePath)
-                    withContext(Dispatchers.Main) { promise.resolve(response) }
+                    // Agentic implementation
+                    // Step 1: Use the synchronous version
+                    val toolsPrompt = """
+                      Available Tools (JSON schema):
+                      ${availableTools.toString()}
+                      
+                      User Query: $prompt
+                      Respond with {"tools": [...]} if you need to call tools.
+                    """.trimIndent()
+
+                    val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+
+                    // Step 2: Parse tool calls (simplified example)
+                    val toolCalls = parseToolCalls(rawResponse)
+                    if (toolCalls.isEmpty()) {
+                        // No tools needed; return raw response
+                        withContext(Dispatchers.Main) { promise.resolve(rawResponse) }
+                        return@launch
+                    }
+                    // Step 3: Execute tools sequentially
+                    val toolResults = mutableListOf<JSONObject>()
+                    for (call in toolCalls.take(3)) { // Limit to 3 tools per run
+                        val result = executeTool(call)
+                        toolResults.add(result)
+                    }
+
+                    // Step 4: Send results back to the model for final response
+                    val finalResponse = model.generateResponse(
+                        requestId,
+                        "Tool results: ${toolResults.joinToString()}",
+                        imagePath
+                    )
+
+                    withContext(Dispatchers.Main) { promise.resolve(finalResponse) }
                 } catch (e: Exception) {
                     Log.e(TAG, "generateResponse: Inference error: ${e.message}", e)
                     sendEvent("logging", mapOf(

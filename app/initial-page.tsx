@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
-import { DownloadableLlmReturn, useLLM } from 'lingopro-multimodal-module';
+import LingoProMultimodal, { DownloadableLlmReturn, useLLM } from 'lingopro-multimodal-module';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useModel } from './context/ModelContext';
@@ -55,6 +55,19 @@ export default function InitialPage() {
   // Determine which LLM instance is currently "active" for UI display and interaction
   const currentLLM = activeModelType === 'default-downloadable' ? defaultDownloadableLLM : userFileLLM;
 
+  const ensureDatabaseReady = async () => {
+    try {
+      const isInitialized = await LingoProMultimodal.isDatabaseInitialized();
+      if (!isInitialized) {
+        await LingoProMultimodal.initializeDatabase();
+        console.log('Database initialized successfully');
+      }
+    } catch (error) {
+      console.error('Database initialization failed:', error);
+    }
+  };
+
+
   // Logging helper: Adds a timestamped message to the logs state and console
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
@@ -76,6 +89,7 @@ export default function InitialPage() {
 
   // Initial setup: Check for existing models first, then default downloadable
   useEffect(() => {
+    ensureDatabaseReady();
     const checkAndLoadExistingModels = async () => {
       setAppUIState('checking');
       addLog("Checking for existing model files...");

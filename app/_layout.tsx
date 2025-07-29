@@ -35,6 +35,9 @@ export default function RootLayout() {
           <Stack.Screen name="quick-session" options={{ headerShown: false }} />
           <Stack.Screen name="chat" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" />
+          <Stack.Screen name="LearningSystem/srs-system" options={{ headerShown: false }} />
+          <Stack.Screen name="LearningSystem/learning-page" options={{ headerShown: false }} />
+          <Stack.Screen name=".LearningSystem/generated-content-page" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="auto" />
       </ModelProvider>

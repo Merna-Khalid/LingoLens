@@ -117,7 +117,7 @@ export default function MainPageScreen() {
   const handleStartSession = () => {
     if (selectedLanguage && selectedLevel) {
       console.log(`Starting session for ${selectedLanguage} at ${selectedLevel} level.`);
-      // Implement actual session start logic here
+      router.push('/LearningSystem/srs-system');
     } else {
       console.log("Please select a language and level first.");
     }
