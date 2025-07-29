@@ -3,6 +3,7 @@ import Icon from 'react-native-vector-icons/Ionicons';
 
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
@@ -20,6 +21,7 @@ interface ChatMessage {
   timestamp: string;
   imageUrl?: string;
   audioUri?: string;
+  attachedImageUrl?: string; // For user-attached images in new messages
 }
 
 // Waveform bar component
@@ -41,6 +43,7 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [inputText, setInputText] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -209,7 +212,7 @@ export default function ChatScreen() {
           audioUri: uri,
         };
         setMessages(prevMessages => [...prevMessages, userMessage]);
-        processMessageWithAI("Voice message", uri, 'voice');
+        processMessageWithAI("Voice message", uri, null, 'voice');
 
         // Switch back to text mode after recording
         setCurrentMode('text');
@@ -225,7 +228,7 @@ export default function ChatScreen() {
   }
 
   // --- AI Message Processing ---
-  const processMessageWithAI = async (textInput: string, audioUri: string | null, mode: InputMode) => {
+  const processMessageWithAI = async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
     if (!isModelReady || modelHandle === undefined) { // Ensure modelHandle is valid
       Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
       return;
@@ -246,7 +249,7 @@ export default function ChatScreen() {
         modelHandle ?? 0,
         Math.floor(Math.random() * 1000000), // Generate a random request ID
         textInput,
-        imageUri ?? ''
+        msgImageUri?? '',
         // Note: The native generateResponse currently doesn't take audioUri.
         // TODO: Update generateResponse
       );
@@ -277,16 +280,18 @@ export default function ChatScreen() {
   };
 
   const handleSendText = () => {
-    if (inputText.trim()) {
+    if (inputText.trim() || selectedImage) {
       const userMessage: ChatMessage = {
         id: Date.now().toString(),
-        text: inputText.trim(),
+        text: inputText.trim() || 'Image',
         sender: 'user',
         timestamp: getTimestamp(),
+        attachedImageUrl: selectedImage || undefined,
       };
       setMessages(prevMessages => [...prevMessages, userMessage]);
       setInputText('');
-      processMessageWithAI(userMessage.text, null, 'text');
+      setSelectedImage(null);
+      processMessageWithAI(userMessage.text, null, selectedImage, 'text');
     }
   };
 
@@ -299,6 +304,32 @@ export default function ChatScreen() {
   const playVoiceMessage = (audioUri: string) => {
     setUri(audioUri);
     audioPlayer.play();
+  };
+
+  // Function to handle image selection
+  const handleImageSelection = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Permission to access photos is required.');
+        return;
+      }
+
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setSelectedImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to select image. Please try again.');
+    }
   };
 
   const toggleInputMode = () => {
@@ -353,6 +384,9 @@ export default function ChatScreen() {
               {message.imageUrl && (
                 <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Image Error:', e.nativeEvent.error)} />
               )}
+              {message.attachedImageUrl && (
+                <Image source={{ uri: message.attachedImageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} />
+              )}
               {message.audioUri ? (
                 <View style={styles.voiceMessageContainer}>
                   <TouchableOpacity
@@ -396,6 +430,17 @@ export default function ChatScreen() {
         </ScrollView>
 
         <View style={styles.inputAreaContainer}>
+          {selectedImage && (
+            <View style={styles.imagePreviewContainer}>
+              <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
+              <TouchableOpacity
+                style={styles.removeImageButton}
+                onPress={() => setSelectedImage(null)}
+              >
+                <Icon name="close" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
           {currentMode === 'text' ? (
             <View style={styles.textInputToolbar}>
               <TextInput
@@ -420,14 +465,12 @@ export default function ChatScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.iconButton}
-                onPress={() => {
-                  // TODO: Implement camera functionality
-                }}
+                onPress={handleImageSelection}
                 disabled={!isModelReady || isLoadingModel}
               >
                 <Icon name="camera-outline" size={20} color="#007AFF" />
               </TouchableOpacity>
-              {inputText.trim() ? (
+              {inputText.trim() || selectedImage ? (
                 <TouchableOpacity
                   style={[styles.sendButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
                   onPress={handleSendText}
@@ -517,19 +560,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#007AFF',
   },
-  imagePreviewContainer: {
-    width: '100%',
-    height: 180,
-    backgroundColor: '#eee',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  imagePreview: {
-    width: '100%',
-    height: '100%',
-  },
+  // imagePreviewContainer: {
+  //   width: '100%',
+  //   height: 180,
+  //   backgroundColor: '#eee',
+  //   justifyContent: 'center',
+  //   alignItems: 'center',
+  //   overflow: 'hidden',
+  //   marginBottom: 10,
+  // },
+  // imagePreview: {
+  //   width: '100%',
+  //   height: '100%',
+  // },
   keyboardAvoidingView: {
     flex: 1,
   },
@@ -843,5 +886,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     fontStyle: 'italic',
+  },
+  imagePreviewContainer: {
+    position: 'relative',
+    marginBottom: 10,
+    alignSelf: 'flex-start',
+  },
+  imagePreview: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
