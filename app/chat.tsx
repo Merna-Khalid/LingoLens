@@ -1,15 +1,16 @@
-import { AudioRecorder, RecorderState, setAudioModeAsync, RecordingPresets, useAudioRecorder, useAudioRecorderState, AudioModule, useAudioPlayer } from "expo-audio";
+import { AudioModule, AudioRecorder, RecorderState, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
 import Icon from 'react-native-vector-icons/Ionicons';
 
+import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
+import LingoProMultimodal from 'lingopro-multimodal-module';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
-import LingoProMultimodal from 'lingopro-multimodal-module';
 
 
 // Define chat message interface
@@ -19,6 +20,8 @@ interface ChatMessage {
   sender: 'user' | 'system';
   timestamp: string;
   imageUrl?: string;
+  audioUri?: string;
+  attachedImageUrl?: string; // For user-attached images in new messages
 }
 
 // Waveform bar component
@@ -34,12 +37,14 @@ export default function ChatScreen() {
 
   const { modelHandle, isModelLoaded, setModelHandle, releaseLoadedModel } = useModel();
 
+  // This variable has the newest uploaded image by the user.
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<InputMode>('text');
   const [recording, setRecording] = useState<AudioRecorder | undefined>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [inputText, setInputText] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
   const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -58,7 +63,8 @@ export default function ChatScreen() {
   const loadModel = async () => {
     if (modelHandle !== null) {
       console.log("modelHandle is not null")
-      return; // Model already loaded
+      setModelHandle(modelHandle);
+      return;
     }
     setIsLoadingModel(true);
     setModelLoadError(null);
@@ -202,12 +208,16 @@ export default function ChatScreen() {
 
         const userMessage: ChatMessage = {
           id: Date.now().toString(),
-          text: "Recording captured. Analyzing...",
+          text: "Voice message",
           sender: 'user',
           timestamp: getTimestamp(),
+          audioUri: uri,
         };
         setMessages(prevMessages => [...prevMessages, userMessage]);
-        processMessageWithAI(userMessage.text, uri, 'voice');
+        processMessageWithAI("Voice message", uri, null, 'voice');
+
+        // Switch back to text mode after recording
+        setCurrentMode('text');
       } else {
         console.error('Recording URI is null.');
         Alert.alert('Recording Error', 'Could not get recorded audio. Please try again.');
@@ -220,41 +230,32 @@ export default function ChatScreen() {
   }
 
   // --- AI Message Processing ---
-  const processMessageWithAI = async (textInput: string, audioUri: string | null, mode: InputMode) => {
-    if (!isModelReady || modelHandle === undefined) { // Ensure modelHandle is valid
+  const processMessageWithAI = async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
+    if (!isModelReady) {
       Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
       return;
     }
 
     setAiThinking(true);
-
-    // Update the "Analyzing..." message for voice input
-    if (mode === 'voice' && textInput === "Recording captured. Analyzing...") {
-      setMessages(prevMessages => {
-        const lastMessage = prevMessages[prevMessages.length - 1];
-        if (lastMessage && lastMessage.text === "Recording captured. Analyzing...") {
-          return prevMessages.map((msg, index) =>
-            index === prevMessages.length - 1 ? { ...msg, text: "User spoke: (audio input)" } : msg
-          );
-        }
-        return prevMessages;
-      });
-    }
-
+    // No need to update voice message text since it's already showing as "Voice message"
     try {
-      if (!imageUri || !modelHandle) {
+      if (!modelHandle) {
         throw new Error("Image URI is missing for AI processing.");
+      }
+
+      // Since gemma-3n only has a maximum of 1 image per session
+      // we set the last uploaded image as the imageUri
+      if (msgImageUri) {
+        setImageUri(msgImageUri);
       }
 
       console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
       // Pass the modelHandle to the native module
       const aiResponseText: string = await LingoProMultimodal.generateResponse(
-        modelHandle ?? 0,
-        Math.floor(Math.random() * 1000000), // Generate a random request ID
+        modelHandle,
+        Math.floor(Math.random() * 1000000),
         textInput,
-        imageUri ?? ''
-        // Note: The native generateResponse currently doesn't take audioUri.
-        // TODO: Update generateResponse
+        msgImageUri ?? imageUri ?? '',
       );
       console.log("MediaPipe AI response:", aiResponseText);
 
@@ -283,22 +284,51 @@ export default function ChatScreen() {
   };
 
   const handleSendText = () => {
-    if (inputText.trim()) {
+    if (inputText.trim() || selectedImage) {
       const userMessage: ChatMessage = {
         id: Date.now().toString(),
-        text: inputText.trim(),
+        text: inputText.trim() || 'Image',
         sender: 'user',
         timestamp: getTimestamp(),
+        attachedImageUrl: selectedImage || undefined,
       };
       setMessages(prevMessages => [...prevMessages, userMessage]);
       setInputText('');
-      processMessageWithAI(userMessage.text, null, 'text');
+      setSelectedImage(null);
+      processMessageWithAI(userMessage.text, null, selectedImage, 'text');
     }
   };
 
   // Function to play AI message audio
   const playAiMessageAudio = (textToSpeak: string) => {
     Speech.speak(textToSpeak, { language: 'en-US' });
+  };
+
+
+  // Function to handle image selection
+  const handleImageSelection = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Permission to access photos is required.');
+        return;
+      }
+
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setSelectedImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to select image. Please try again.');
+    }
   };
 
   const toggleInputMode = () => {
@@ -353,15 +383,30 @@ export default function ChatScreen() {
               {message.imageUrl && (
                 <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Image Error:', e.nativeEvent.error)} />
               )}
-              <Text style={[styles.messageText]}>
-                {message.sender === 'user' ? (
-                  message.text
-                ) : (
-                  <Markdown>
-                    {message.text}
-                  </Markdown>
-                )}
-              </Text>
+              {message.attachedImageUrl && (
+                <Image source={{ uri: message.attachedImageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} />
+              )}
+              {message.audioUri ? (
+                <View style={styles.voiceMessageContainer}>
+                  <TouchableOpacity
+                    style={styles.voicePlayButton}
+                    onPress={() => playVoiceMessage(message.audioUri!)}
+                  >
+                    <Icon name="play" size={20} color="#007AFF" />
+                  </TouchableOpacity>
+                  <Text style={styles.voiceMessageText}>Voice message</Text>
+                </View>
+              ) : (
+                <Text style={[styles.messageText]}>
+                  {message.sender === 'user' ? (
+                    message.text
+                  ) : (
+                    <Markdown>
+                      {message.text}
+                    </Markdown>
+                  )}
+                </Text>
+              )}
               <View style={styles.messageFooter}>
                 {message.sender === 'system' && (
                   <TouchableOpacity
@@ -384,6 +429,17 @@ export default function ChatScreen() {
         </ScrollView>
 
         <View style={styles.inputAreaContainer}>
+          {selectedImage && (
+            <View style={styles.imagePreviewContainer}>
+              <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
+              <TouchableOpacity
+                style={styles.removeImageButton}
+                onPress={() => setSelectedImage(null)}
+              >
+                <Icon name="close" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
           {currentMode === 'text' ? (
             <View style={styles.textInputToolbar}>
               <TextInput
@@ -397,13 +453,39 @@ export default function ChatScreen() {
                 onSubmitEditing={handleSendText}
                 editable={isModelReady && !isLoadingModel} // Only editable if model is ready
               />
-              <TouchableOpacity
-                style={[styles.sendButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
-                onPress={handleSendText}
+              {/* <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => {
+                  // TODO: Implement clipboard functionality
+                }}
                 disabled={!isModelReady || isLoadingModel}
               >
-                <Text style={styles.sendButtonText}>Send</Text>
+                <Icon name="clipboard-outline" size={20} color="#007AFF" />
+              </TouchableOpacity> */}
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={handleImageSelection}
+                disabled={!isModelReady || isLoadingModel}
+              >
+                <Icon name="camera-outline" size={20} color="#007AFF" />
               </TouchableOpacity>
+              {inputText.trim() || selectedImage ? (
+                <TouchableOpacity
+                  style={[styles.sendButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
+                  onPress={handleSendText}
+                  disabled={!isModelReady || isLoadingModel}
+                >
+                  <Text style={styles.sendButtonText}>Send</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.modeToggleButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
+                  onPress={toggleInputMode}
+                  disabled={!isModelReady || isLoadingModel}
+                >
+                  <Text style={styles.modeToggleButtonText}>🎤</Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
             <View style={styles.voiceInputToolbar}>
@@ -440,16 +522,6 @@ export default function ChatScreen() {
               </View>
             </View>
           )}
-
-          <TouchableOpacity
-            style={styles.modeToggleButton}
-            onPress={toggleInputMode}
-            disabled={!recording || recording.isRecording || !isModelReady || isLoadingModel} // Disable mode toggle if not ready
-          >
-            <Text style={styles.modeToggleButtonText}>
-              {currentMode === 'text' ? '🎤' : '⌨️'}
-            </Text>
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -487,19 +559,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#007AFF',
   },
-  imagePreviewContainer: {
-    width: '100%',
-    height: 180,
-    backgroundColor: '#eee',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  imagePreview: {
-    width: '100%',
-    height: '100%',
-  },
+  // imagePreviewContainer: {
+  //   width: '100%',
+  //   height: 180,
+  //   backgroundColor: '#eee',
+  //   justifyContent: 'center',
+  //   alignItems: 'center',
+  //   overflow: 'hidden',
+  //   marginBottom: 10,
+  // },
+  // imagePreview: {
+  //   width: '100%',
+  //   height: '100%',
+  // },
   keyboardAvoidingView: {
     flex: 1,
   },
@@ -603,6 +675,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  iconButton: {
+    padding: 10,
+    marginRight: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   voiceInputToolbar: {
     flex: 1,
     alignItems: 'center',
@@ -689,6 +767,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   modelLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(240, 244, 248, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -780,5 +863,48 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     width: '100%',
     marginTop: 5,
+  },
+  voiceMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f4f8',
+    borderRadius: 20,
+    padding: 10,
+    minWidth: 120,
+  },
+  voicePlayButton: {
+    backgroundColor: '#e0eaff',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  voiceMessageText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  imagePreviewContainer: {
+    position: 'relative',
+    marginBottom: 10,
+    alignSelf: 'flex-start',
+  },
+  imagePreview: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

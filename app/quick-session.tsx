@@ -1,4 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
+import Icon from 'react-native-vector-icons/Ionicons';
+
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,7 +58,7 @@ export default function QuickSessionScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-          <Text style={styles.backButtonText}>←</Text>
+          <Icon name="arrow-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Photo Preview</Text>
         <View style={{ width: 40 }} />

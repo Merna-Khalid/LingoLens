@@ -2,7 +2,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { useEffect, useRef, useState } from 'react';
 
-import ExpoLlmMediapipe from 'lingopro-multimodal-module';
+import ExpoLlmMediapipe, { ErrorResponseEventPayload, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
 import {
   ActivityIndicator,
   Alert,
