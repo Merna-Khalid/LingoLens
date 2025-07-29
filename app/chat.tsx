@@ -63,7 +63,8 @@ export default function ChatScreen() {
   const loadModel = async () => {
     if (modelHandle !== null) {
       console.log("modelHandle is not null")
-      return; // Model already loaded
+      setModelHandle(modelHandle);
+      return;
     }
     setIsLoadingModel(true);
     setModelLoadError(null);
