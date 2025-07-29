@@ -1,35 +1,15 @@
 import { AudioRecorder, RecorderState, setAudioModeAsync, RecordingPresets, useAudioRecorder, useAudioRecorderState, AudioModule, useAudioPlayer } from "expo-audio";
-import Icon from 'react-native-vector-icons/Ionicons';
-
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import Markdown from 'react-native-markdown-display';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
 import LingoProMultimodal from 'lingopro-multimodal-module';
-
-
-// Define chat message interface
-interface ChatMessage {
-  id: string;
-  text: string;
-  sender: 'user' | 'system';
-  timestamp: string;
-  imageUrl?: string;
-  audioUri?: string;
-  attachedImageUrl?: string; // For user-attached images in new messages
-}
-
-// Waveform bar component
-const WaveformBar: React.FC<{ height: number }> = ({ height }) => (
-  <View style={[styles.waveformBar, { height: Math.max(5, height) }]} /> // Min height to always be visible
-);
-
-type InputMode = 'text' | 'voice';
+import { ChatHeader, MessageList, MessageInput, ModelLoadingOverlay, ChatMessage, InputMode } from '@/components/chat';
+import { ChatMessage as ChatMessageType } from '@/components/chat/types';
 
 export default function ChatScreen() {
   // Receive modelHandle along with photoUri and initialMode
@@ -41,16 +21,13 @@ export default function ChatScreen() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<InputMode>('text');
   const [recording, setRecording] = useState<AudioRecorder | undefined>();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
-  const scrollViewRef = useRef<ScrollView>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingStateRef = useRef<RecorderState>(null);
-
-
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   recordingStateRef.current = useAudioRecorderState(audioRecorder);
@@ -148,9 +125,9 @@ export default function ChatScreen() {
     };
   }, [paramImageUri, isModelReady]); // Depend on isModelReady
 
-  useEffect(() => {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [messages]);
+  // useEffect(() => {
+  //   scrollViewRef.current?.scrollToEnd({ animated: true });
+  // }, [messages]);
 
   // --- Audio Recording Functions ---
   async function startRecording() {
@@ -206,7 +183,7 @@ export default function ChatScreen() {
         setUri(uri);
         console.log('Recording stopped and stored at', uri);
 
-        const userMessage: ChatMessage = {
+        const userMessage: ChatMessageType = {
           id: Date.now().toString(),
           text: "Voice message",
           sender: 'user',
@@ -285,7 +262,7 @@ export default function ChatScreen() {
 
   const handleSendText = () => {
     if (inputText.trim() || selectedImage) {
-      const userMessage: ChatMessage = {
+      const userMessage: ChatMessageType = {
         id: Date.now().toString(),
         text: inputText.trim() || 'Image',
         sender: 'user',
@@ -345,189 +322,41 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          {/* <Text style={styles.backButtonText}>←</Text> */}
-          <Icon name="arrow-back" size={24} color="#000" />
+      <ChatHeader
+        title="AI Chat"
+        onBack={() => router.back()}
+      />
 
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>AI Chat</Text>
-        <TouchableOpacity style={styles.shareButton}>
-          <Text style={styles.shareButtonText}>📤</Text>
-        </TouchableOpacity>
-      </View>
-
-      {isLoadingModel && (
-        <View style={styles.modelLoadingOverlay}>
-          <View style={styles.modelLoadingCard}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.modelLoadingTitle}>Loading AI Model</Text>
-            <Text style={styles.modelLoadingSubtitle}>Please wait while we prepare the AI...</Text>
-          </View>
-        </View>
-      )}
+      <ModelLoadingOverlay isVisible={isLoadingModel} />
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.chatContainer}
-          contentContainerStyle={styles.chatContentContainer}
-        >
-          {messages.map((message) => (
-            <View
-              key={message.id}
-              style={[
-                styles.messageBubble,
-                message.sender === 'user' ? styles.userBubble : styles.aiBubble,
-              ]}
-            >
-              {message.imageUrl && (
-                <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Image Error:', e.nativeEvent.error)} />
-              )}
-              {message.attachedImageUrl && (
-                <Image source={{ uri: message.attachedImageUrl }} style={styles.messageImage} resizeMode="cover" onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} />
-              )}
-              {message.audioUri ? (
-                <View style={styles.voiceMessageContainer}>
-                  <TouchableOpacity
-                    style={styles.voicePlayButton}
-                    onPress={() => playVoiceMessage(message.audioUri!)}
-                  >
-                    <Icon name="play" size={20} color="#007AFF" />
-                  </TouchableOpacity>
-                  <Text style={styles.voiceMessageText}>Voice message</Text>
-                </View>
-              ) : (
-                <Text style={[styles.messageText]}>
-                  {message.sender === 'user' ? (
-                    message.text
-                  ) : (
-                    <Markdown>
-                      {message.text}
-                    </Markdown>
-                  )}
-                </Text>
-              )}
-              <View style={styles.messageFooter}>
-                {message.sender === 'system' && (
-                  <TouchableOpacity
-                    style={styles.playButton}
-                    onPress={() => playAiMessageAudio(message.text)}
-                  >
-                    <Text style={styles.playButtonIcon}>🔊</Text>
-                  </TouchableOpacity>
-                )}
-                <Text style={[styles.timestamp]}>{message.timestamp}</Text>
-              </View>
-            </View>
-          ))}
-          {aiThinking && (
-            <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
-              <ActivityIndicator size="small" color="#333" />
-              <Text style={styles.timestamp}>AI is thinking...</Text>
-            </View>
-          )}
-        </ScrollView>
+        <MessageList
+          messages={messages}
+          aiThinking={aiThinking}
+          onPlayVoiceMessage={playVoiceMessage}
+          onPlayAiAudio={playAiMessageAudio}
+        />
 
-        <View style={styles.inputAreaContainer}>
-          {selectedImage && (
-            <View style={styles.imagePreviewContainer}>
-              <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
-              <TouchableOpacity
-                style={styles.removeImageButton}
-                onPress={() => setSelectedImage(null)}
-              >
-                <Icon name="close" size={20} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          )}
-          {currentMode === 'text' ? (
-            <View style={styles.textInputToolbar}>
-              <TextInput
-                style={styles.textInput}
-                placeholder="Type your message..."
-                placeholderTextColor="#999"
-                value={inputText}
-                onChangeText={setInputText}
-                multiline
-                returnKeyType="send"
-                onSubmitEditing={handleSendText}
-                editable={isModelReady && !isLoadingModel} // Only editable if model is ready
-              />
-              {/* <TouchableOpacity
-                style={styles.iconButton}
-                onPress={() => {
-                  // TODO: Implement clipboard functionality
-                }}
-                disabled={!isModelReady || isLoadingModel}
-              >
-                <Icon name="clipboard-outline" size={20} color="#007AFF" />
-              </TouchableOpacity> */}
-              <TouchableOpacity
-                style={styles.iconButton}
-                onPress={handleImageSelection}
-                disabled={!isModelReady || isLoadingModel}
-              >
-                <Icon name="camera-outline" size={20} color="#007AFF" />
-              </TouchableOpacity>
-              {inputText.trim() || selectedImage ? (
-                <TouchableOpacity
-                  style={[styles.sendButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
-                  onPress={handleSendText}
-                  disabled={!isModelReady || isLoadingModel}
-                >
-                  <Text style={styles.sendButtonText}>Send</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.modeToggleButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
-                  onPress={toggleInputMode}
-                  disabled={!isModelReady || isLoadingModel}
-                >
-                  <Text style={styles.modeToggleButtonText}>🎤</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ) : (
-            <View style={styles.voiceInputToolbar}>
-              <View style={styles.waveformRow}>
-                {waveformHeights.map((h, index) => (
-                  <WaveformBar key={index} height={h} />
-                ))}
-              </View>
-
-              <View style={styles.controlsRow}>
-                <TouchableOpacity style={styles.controlButton}>
-                  <Text style={styles.controlIcon}>🎤</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.recordButton, (!isModelReady || isLoadingModel) && styles.disabledButton]}
-                  onPress={
-                    !recording || !recording.isRecording
-                      ? startRecording
-                      : stopRecording
-                  }
-                  disabled={!isModelReady || isLoadingModel}
-                >
-                  {recording && recording.isRecording ? (
-                    <ActivityIndicator size="large" color="#fff" />
-                  ) : (
-                    <Text style={styles.recordButtonIcon}>●</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.controlButton}>
-                  <Text style={styles.controlIcon}>⚙️</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-        </View>
+        <MessageInput
+          currentMode={currentMode}
+          inputText={inputText}
+          selectedImage={selectedImage}
+          isRecording={!!recording?.isRecording}
+          waveformHeights={waveformHeights}
+          isModelReady={isModelReady}
+          isLoadingModel={isLoadingModel}
+          onTextChange={setInputText}
+          onSendText={handleSendText}
+          onImageSelect={handleImageSelection}
+          onRemoveImage={() => setSelectedImage(null)}
+          onToggleMode={toggleInputMode}
+          onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -538,378 +367,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f0f4f8',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    // paddingHorizontal: 15,
-    paddingVertical: 10,
-  },
-  backButton: {
-    padding: 10,
-  },
-  backButtonText: {
-    fontSize: 25,
-    color: '#555',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  shareButton: {
-    padding: 10,
-  },
-  shareButtonText: {
-    fontSize: 20,
-    color: '#007AFF',
-  },
-  // imagePreviewContainer: {
-  //   width: '100%',
-  //   height: 180,
-  //   backgroundColor: '#eee',
-  //   justifyContent: 'center',
-  //   alignItems: 'center',
-  //   overflow: 'hidden',
-  //   marginBottom: 10,
-  // },
-  // imagePreview: {
-  //   width: '100%',
-  //   height: '100%',
-  // },
   keyboardAvoidingView: {
     flex: 1,
-  },
-  chatContainer: {
-    flex: 1,
-  },
-  chatContentContainer: {
-    flexGrow: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 15,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#f1ecf1',
-    // borderBottomRightRadius: 5,
-  },
-  aiBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#fff',
-    // borderBottomLeftRadius: 5,
-  },
-  aiThinkingBubble: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  messageText: {
-    fontSize: 16,
-    color: '#333',
-    flexShrink: 1,
-  },
-  timestamp: {
-    fontSize: 10,
-    color: '#777',
-    alignSelf: 'flex-end',
-    marginLeft: 8,
-  },
-  playButton: {
-    padding: 5,
-    borderRadius: 15,
-    backgroundColor: '#e0e0e0',
-  },
-  playButtonIcon: {
-    fontSize: 16,
-    color: '#007AFF',
-  },
-  inputAreaContainer: {
-    backgroundColor: '#fff',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    // shadowColor: '#000',
-    // shadowOffset: { width: 0, height: -5 },
-    // shadowOpacity: 0.1,
-    // shadowRadius: 10,
-    // elevation: 10,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  textInputToolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 10,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#f0f4f8',
-    borderRadius: 20,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    fontSize: 16,
-    marginRight: 10,
-    maxHeight: 100,
-  },
-  sendButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  iconButton: {
-    padding: 10,
-    marginRight: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  voiceInputToolbar: {
-    flex: 1,
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  waveformRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    height: 60,
-    width: '100%',
-    marginBottom: 15,
-  },
-  waveformBar: {
-    width: 4,
-    backgroundColor: '#007AFF',
-    marginHorizontal: 1,
-    borderRadius: 2,
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    width: '100%',
-  },
-  controlButton: {
-    backgroundColor: '#f0f4f8',
-    borderRadius: 30,
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  controlIcon: {
-    fontSize: 28,
-    color: '#555',
-  },
-  recordButton: {
-    backgroundColor: '#dc3545',
-    borderRadius: 40,
-    width: 80,
-    height: 80,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#dc3545',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  recordButtonIcon: {
-    fontSize: 40,
-    color: '#fff',
-  },
-  modeToggleButton: {
-    backgroundColor: '#e0eaff',
-    borderRadius: 30,
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  modeToggleButtonText: {
-    fontSize: 28,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-
-  // Model Status Styles
-  modelStatusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    backgroundColor: '#f5f5f5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-  },
-  modelLoadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(240, 244, 248, 0.95)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  modelLoadingCard: {
-    backgroundColor: '#fff',
-    padding: 30,
-    borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-    minWidth: 200,
-  },
-  modelLoadingTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 15,
-    textAlign: 'center',
-  },
-  modelLoadingSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  modelStatusText: {
-    marginLeft: 10,
-    fontSize: 14,
-    color: '#333',
-    flexShrink: 1,
-  },
-  modelErrorText: {
-    color: 'red',
-    fontSize: 14,
-    flexShrink: 1,
-    marginRight: 10,
-  },
-  downloadControls: {
-    flexDirection: 'row',
-    marginLeft: 'auto',
-    gap: 8,
-    marginTop: 5,
-  },
-  downloadControl: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pauseButton: {
-    backgroundColor: '#ff9500',
-  },
-  resumeButton: {
-    backgroundColor: '#34c759',
-  },
-  cancelButton: {
-    backgroundColor: '#ff3b30',
-  },
-  retryButton: {
-    backgroundColor: '#007AFF',
-    marginLeft: 10,
-  },
-  downloadControlText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'space-between',
-  },
-  messageImage: {
-    width: 150,
-    height: 150,
-    borderRadius: 10,
-    marginBottom: 10,
-  },
-  messageFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    width: '100%',
-    marginTop: 5,
-  },
-  voiceMessageContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0f4f8',
-    borderRadius: 20,
-    padding: 10,
-    minWidth: 120,
-  },
-  voicePlayButton: {
-    backgroundColor: '#e0eaff',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  voiceMessageText: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  imagePreviewContainer: {
-    position: 'relative',
-    marginBottom: 10,
-    alignSelf: 'flex-start',
-  },
-  imagePreview: {
-    width: 80,
-    height: 80,
-    borderRadius: 10,
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    borderRadius: 15,
-    width: 30,
-    height: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });
