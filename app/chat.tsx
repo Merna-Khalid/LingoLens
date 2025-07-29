@@ -37,6 +37,7 @@ export default function ChatScreen() {
 
   const { modelHandle, isModelLoaded, setModelHandle, releaseLoadedModel } = useModel();
 
+  // This variable has the newest uploaded image by the user.
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<InputMode>('text');
   const [recording, setRecording] = useState<AudioRecorder | undefined>();
@@ -229,29 +230,31 @@ export default function ChatScreen() {
 
   // --- AI Message Processing ---
   const processMessageWithAI = async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
-    if (!isModelReady || modelHandle === undefined) { // Ensure modelHandle is valid
+    if (!isModelReady) {
       Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
       return;
     }
 
     setAiThinking(true);
-
     // No need to update voice message text since it's already showing as "Voice message"
-
     try {
-      if (!imageUri || !modelHandle) {
+      if (!modelHandle) {
         throw new Error("Image URI is missing for AI processing.");
+      }
+
+      // Since gemma-3n only has a maximum of 1 image per session
+      // we set the last uploaded image as the imageUri
+      if (msgImageUri) {
+        setImageUri(msgImageUri);
       }
 
       console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
       // Pass the modelHandle to the native module
       const aiResponseText: string = await LingoProMultimodal.generateResponse(
-        modelHandle ?? 0,
-        Math.floor(Math.random() * 1000000), // Generate a random request ID
+        modelHandle,
+        Math.floor(Math.random() * 1000000),
         textInput,
-        msgImageUri ?? '',
-        // Note: The native generateResponse currently doesn't take audioUri.
-        // TODO: Update generateResponse
+        msgImageUri ?? imageUri ?? '',
       );
       console.log("MediaPipe AI response:", aiResponseText);
 
