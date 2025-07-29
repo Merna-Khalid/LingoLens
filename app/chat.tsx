@@ -249,7 +249,7 @@ export default function ChatScreen() {
         modelHandle ?? 0,
         Math.floor(Math.random() * 1000000), // Generate a random request ID
         textInput,
-        msgImageUri?? '',
+        msgImageUri ?? '',
         // Note: The native generateResponse currently doesn't take audioUri.
         // TODO: Update generateResponse
       );
@@ -310,7 +310,7 @@ export default function ChatScreen() {
   const handleImageSelection = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
+
       if (!permissionResult.granted) {
         Alert.alert('Permission Required', 'Permission to access photos is required.');
         return;
@@ -454,7 +454,7 @@ export default function ChatScreen() {
                 onSubmitEditing={handleSendText}
                 editable={isModelReady && !isLoadingModel} // Only editable if model is ready
               />
-              <TouchableOpacity
+              {/* <TouchableOpacity
                 style={styles.iconButton}
                 onPress={() => {
                   // TODO: Implement clipboard functionality
@@ -462,7 +462,7 @@ export default function ChatScreen() {
                 disabled={!isModelReady || isLoadingModel}
               >
                 <Icon name="clipboard-outline" size={20} color="#007AFF" />
-              </TouchableOpacity>
+              </TouchableOpacity> */}
               <TouchableOpacity
                 style={styles.iconButton}
                 onPress={handleImageSelection}
