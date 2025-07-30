@@ -1,12 +1,12 @@
 import { ChatHeader, InputMode, MessageInput, MessageList, ModelLoadingOverlay } from '@/components/chat';
 import { ChatMessage as ChatMessageType } from '@/components/chat/types';
 import { AudioModule, AudioRecorder, RecorderState, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import React, { useEffect, useRef, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
@@ -29,12 +29,12 @@ export default function ChatScreen() {
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
 
   const {
-      modelHandle,
-      isModelLoaded,
-      isLoadingModel,
-      modelLoadError,
-      loadModel
-    } = useModel();
+    modelHandle,
+    isModelLoaded,
+    isLoadingModel,
+    modelLoadError,
+    loadModel
+  } = useModel();
 
   // This variable has the newest uploaded image by the user.
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -57,10 +57,10 @@ export default function ChatScreen() {
   const [useAgenticTools, setUseAgenticTools] = useState(false);
 
   useEffect(() => {
-      if (!isModelLoaded && !isLoadingModel) {
-        loadModel(DEFAULT_MODEL_PATH).catch(console.error);
-      }
-    }, [isModelLoaded, isLoadingModel, loadModel]);
+    if (!isModelLoaded && !isLoadingModel) {
+      loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+    }
+  }, [isModelLoaded, isLoadingModel, loadModel]);
 
   const getTimestamp = () => {
     const now = new Date();
@@ -216,7 +216,7 @@ export default function ChatScreen() {
         Math.floor(Math.random() * 1000000),
         textInput,
         msgImageUri ?? imageUri ?? '',
-        useAgenticTools
+        useAgenticTools,
       );
       console.log("MediaPipe AI response:", aiResponseText);
 
@@ -310,12 +310,14 @@ export default function ChatScreen() {
       <ChatHeader
         title="AI Chat"
         onBack={() => router.back()}
-        rightComponent={ // <-- Singular prop name
-              <ToolsToggle
-                key="tools-toggle"
-                useTools={useAgenticTools}
-                onToggle={() => setUseAgenticTools(!useAgenticTools)}
-              />
+        rightComponents={[
+          <ToolsToggle
+            key="tools-toggle"
+            useAgenticTools={useAgenticTools}
+            onToggle={() => setUseAgenticTools(!useAgenticTools)}
+          />
+        ]
+
         }
       />
 
