@@ -148,7 +148,7 @@ const Yes = () => {
     setError('');
     const requestId = nextRequestIdRef.current++;
     try {
-      const result = await ExpoLlmMediapipe.generateResponse(modelHandle, requestId, prompt, imagePath ?? '');
+      const result = await ExpoLlmMediapipe.generateResponse(modelHandle, requestId, prompt, imagePath ?? '', false);
       setResponse(result);
     } catch (e: any) {
       setError(`Generate Response Error: ${e.message}`);
@@ -190,7 +190,7 @@ const Yes = () => {
     streamingListenersRef.current.push(errorSub);
 
     try {
-      await ExpoLlmMediapipe.generateResponseAsync(modelHandle, currentRequestId, prompt, imagePath ?? '');
+      await ExpoLlmMediapipe.generateResponseAsync(modelHandle, currentRequestId, prompt, imagePath ?? '', false);
       // If successful, promise resolves after all parts.
       // isLoadingAction will be set to false in the finally block.
     } catch (e: any) {
