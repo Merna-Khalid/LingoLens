@@ -253,7 +253,7 @@ class LlmInferenceModel(
         } catch (e: Exception) {
             Log.e("LlmInferenceModel", "Inference error", e)
             inferenceListener?.onError(this, requestId, e.message ?: "Unknown error")
-            throw LlmInferenceException("Generation failed", e)
+            throw e
         } finally {
             try {
                 inputStream?.close()
