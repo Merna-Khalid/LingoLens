@@ -620,8 +620,9 @@ class LingoproMultimodalModule : Module() {
                     } else {
                         val prompt = """
                     Suggest $count common vocabulary topics for learning $language.
-                    Return ONLY a JSON array like: ["family","food"].
+                    Return ONLY a raw JSON array like: ["family","food"].
                     Exclude any explanations or additional text.
+                    Do NOT enclose the JSON array in markdown code blocks (```json ... ```).
                 """.trimIndent()
 
                         val model = modelMap[handle] ?: run {
@@ -661,7 +662,7 @@ class LingoproMultimodalModule : Module() {
                     }
 
                     Log.d(TAG, "✅ Final recommended topics: $result")
-                    promise.resolve(JSONArray(result))
+                    promise.resolve(result.toString())
                 } catch (e: Exception) {
                     Log.e(TAG, "🔥 Failed to get recommended topics", e)
                     promise.reject("TOPIC_ERROR", "Failed to get recommended topics", e)
@@ -675,12 +676,14 @@ class LingoproMultimodalModule : Module() {
                     val words = dbHelper.getNounsByCategory(language, topic).take(5)
                     val wordCount = dbHelper.getWordCountByCategory(language, topic)
 
-                    promise.resolve(JSONObject().apply {
+                    val json = JSONObject().apply {
                         put("topic", topic)
                         put("wordCount", wordCount)
                         put("exampleWords", JSONArray(words.map { it.word }))
                         put("totalWords", wordCount)
-                    })
+                    }
+                    promise.resolve(json.toString())
+
                 } catch (e: Exception) {
                     promise.reject("TOPIC_ERROR", "Failed to get topic preview", e)
                 }

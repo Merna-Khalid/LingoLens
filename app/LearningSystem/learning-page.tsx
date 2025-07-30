@@ -34,25 +34,25 @@ const PROGRESS_KEY = 'lingopro_language_progress';
 export default function LearningPage() {
   const router = useRouter();
   const {
-        modelHandle,
-        isModelLoaded,
-        isLoadingModel,
-        modelLoadError,
-        loadModel
+    modelHandle,
+    isModelLoaded,
+    isLoadingModel,
+    modelLoadError,
+    loadModel
   } = useModel();
 
   const loadUserSettings = async () => {
-      try {
-        const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-        const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
-        const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
+    try {
+      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
+      const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
 
-        if (storedLanguage) setSelectedLanguage(storedLanguage);
-        console.log('Loaded settings:', { storedLanguage, storedLevel, storedProgressJson });
-      } catch (error) {
-        console.error('Failed to load user settings:', error);
-      }
-    };
+      if (storedLanguage) setSelectedLanguage(storedLanguage);
+      console.log('Loaded settings:', { storedLanguage, storedLevel, storedProgressJson });
+    } catch (error) {
+      console.error('Failed to load user settings:', error);
+    }
+  };
 
   const [isDbInitialized, setIsDbInitialized] = useState(true); // Assuming true if navigated here
   const [selectedLanguage, setSelectedLanguage] = useState('English'); // Default, or get from params/AsyncStorage
@@ -64,10 +64,10 @@ export default function LearningPage() {
   const [numberOfCards, setNumberOfCards] = useState('5'); // Default to 5 cards
 
   useEffect(() => {
-        if (!isModelLoaded && !isLoadingModel) {
-          loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+    if (!isModelLoaded && !isLoadingModel) {
+      loadModel(DEFAULT_MODEL_PATH).catch(console.error);
 
-        }
+    }
   }, [isModelLoaded, isLoadingModel, loadModel]);
 
   // --- Fetch Recommendations Effect ---
@@ -75,41 +75,45 @@ export default function LearningPage() {
     loadUserSettings();
     const fetchRecommendations = async () => {
       if (!isModelLoaded) {
-          // If the model is not loaded, we simply wait for it.
-          // The ModelProvider's useEffect is responsible for initiating loadModel().
-          console.log("Model not loaded yet. Waiting for model to load...");
-          return;
+        // If the model is not loaded, we simply wait for it.
+        // The ModelProvider's useEffect is responsible for initiating loadModel().
+        console.log("Model not loaded yet. Waiting for model to load...");
+        return;
       }
       setIsLoadingContent(true);
       try {
-          const count = 10;
-          const topicStrings: string[] = await LingoProMultimodal.getRecommendedTopics(modelHandle, Math.floor(Math.random() * 1000000), selectedLanguage, count);
+        const count = 10;
+        const topicStringsRaw: string = await LingoProMultimodal.getRecommendedTopics(modelHandle, Math.floor(Math.random() * 1000000), selectedLanguage, count);
+        const topicStrings = topicStringsRaw
+          .slice(1, -1) // remove brackets
+          .split(",")   // split on commas
+          .map(item => item.trim()); // trim spaces
 
-          const previews: TopicPreview[] = await Promise.all(
-            topicStrings.map(async (topic) => {
-              const preview = await LingoProMultimodal.getTopicPreview(topic, selectedLanguage);
-              return {
-                topic: preview.topic,
-                wordCount: preview.wordCount,
-                exampleWords: Array.isArray(preview.exampleWords) ? preview.exampleWords.join(', ') : preview.exampleWords,
-              };
-            })
-          );
+        const previews: TopicPreview[] = await Promise.all(
+          topicStrings.map(async (topic) => {
+            const preview: TopicPreview = JSON.parse(await LingoProMultimodal.getTopicPreview(topic, selectedLanguage));
+            return {
+              topic: preview.topic,
+              wordCount: preview.wordCount,
+              exampleWords: Array.isArray(preview.exampleWords) ? preview.exampleWords.join(', ') : preview.exampleWords,
+            } as TopicPreview;
+          })
+        );
 
-          setRecommendedTopics({
-            priorityTopics: previews.slice(0, 3),
-            otherTopics: previews.slice(3),
-          });
+        setRecommendedTopics({
+          priorityTopics: previews.slice(0, 3),
+          otherTopics: previews.slice(3),
+        });
 
-        } catch (error: any) {
-          console.error('Error fetching recommendations:', error);
-          Alert.alert('Error', `Failed to get learning recommendations: ${error.message}`);
-        } finally {
-          setIsLoadingContent(false); // End general loading
-        }
-      };
-      fetchRecommendations();
-    }, [isDbInitialized, selectedLanguage, isModelLoaded]);  // Re-fetch when language changes
+      } catch (error: any) {
+        console.error('Error fetching recommendations:', error);
+        Alert.alert('Error', `Failed to get learning recommendations: ${error.message}`);
+      } finally {
+        setIsLoadingContent(false); // End general loading
+      }
+    };
+    fetchRecommendations();
+  }, [isDbInitialized, selectedLanguage, isModelLoaded]);  // Re-fetch when language changes
 
   // --- Handle Generating Content ---
   const handleGenerateContent = async () => {
@@ -134,35 +138,35 @@ export default function LearningPage() {
 
     try {
       const result = await LingoProMultimodal.generateTopicCards({
-              handle: modelHandle,
-              requestId: Math.floor(Math.random() * 1000000),
-              topic: topicToUse,
-              language: selectedLanguage,
-              count: count,
-              deckLevel: "a1"
-            });
+        handle: modelHandle,
+        requestId: Math.floor(Math.random() * 1000000),
+        topic: topicToUse,
+        language: selectedLanguage,
+        count: count,
+        deckLevel: "a1"
+      });
 
 
       const wordsForDisplay: Word[] = result.cards.map((card: any) => ({
-              id: card.wordId,
-              language: selectedLanguage,
-              word: card.word || "Generated Word", // Assuming 'word' might be available in SrsCard JSON
-              meaning: card.meaning || "Generated Meaning", // Assuming 'meaning' might be available
-              writing: card.writing || card.word || "Generated Word",
-              wordType: card.wordType || "unknown",
-              category1: topicToUse,
-              tags: card.tags || [],
-            }));
+        id: card.wordId,
+        language: selectedLanguage,
+        word: card.word || "Generated Word", // Assuming 'word' might be available in SrsCard JSON
+        meaning: card.meaning || "Generated Meaning", // Assuming 'meaning' might be available
+        writing: card.writing || card.word || "Generated Word",
+        wordType: card.wordType || "unknown",
+        category1: topicToUse,
+        tags: card.tags || [],
+      }));
 
 
       // Navigate to GeneratedContentPage, passing data as params
       router.navigate({
-          pathname: '/LearningSystem/generated-content-page',
-          params: {
-            generatedWords: JSON.stringify(wordsForDisplay), // Pass the words
-            generatedStory: JSON.stringify({ original: result.content, translation: result.translation }),
-          },
-        });
+        pathname: '/LearningSystem/generated-content-page',
+        params: {
+          generatedWords: JSON.stringify(wordsForDisplay), // Pass the words
+          generatedStory: JSON.stringify({ original: result.content, translation: result.translation }),
+        },
+      });
 
     } catch (error: any) {
       console.error('Error generating content:', error);
@@ -172,93 +176,93 @@ export default function LearningPage() {
     }
   };
 
-    return (
-      <SafeAreaView style={styles.fullPageContainer}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <AntDesign name="arrowleft" size={24} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Learning Topics</Text>
-          <View style={styles.badgePlaceholder} />
-        </View>
+  return (
+    <SafeAreaView style={styles.fullPageContainer}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <AntDesign name="arrowleft" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Learning Topics</Text>
+        <View style={styles.badgePlaceholder} />
+      </View>
 
-        <ScrollView style={styles.contentScrollView}>
-          {isLoadingModel || isLoadingContent ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#6200EE" />
-              <Text style={styles.loadingText}>
-                {isLoadingModel ? "Loading AI model..." : "Loading topics or generating content..."}
-              </Text>
-              {modelLoadError && !isModelLoaded && (
-                  <View style={styles.modelNotLoadedContainer}>
-                      <Text style={styles.modelNotLoadedText}>{modelLoadError}</Text>
-                      <TouchableOpacity style={styles.retryButton} onPress={loadModel}>
-                          <Text style={styles.retryButtonText}>Retry Load Model</Text>
-                      </TouchableOpacity>
-                  </View>
-              )}
-            </View>
-          ) : (
-            <>
-              <Text style={styles.learningTitle}>Choose a Topic to Learn</Text>
+      <ScrollView style={styles.contentScrollView}>
+        {isLoadingModel || isLoadingContent ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6200EE" />
+            <Text style={styles.loadingText}>
+              {isLoadingModel ? "Loading AI model..." : "Loading topics or generating content..."}
+            </Text>
+            {modelLoadError && !isModelLoaded && (
+              <View style={styles.modelNotLoadedContainer}>
+                <Text style={styles.modelNotLoadedText}>{modelLoadError}</Text>
+                <TouchableOpacity style={styles.retryButton} onPress={loadModel}>
+                  <Text style={styles.retryButtonText}>Retry Load Model</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ) : (
+          <>
+            <Text style={styles.learningTitle}>Choose a Topic to Learn</Text>
 
-              {!isModelLoaded && !modelLoadError && (
-                  <View style={styles.modelNotLoadedContainer}>
-                      <Text style={styles.modelNotLoadedText}>AI Model is initializing. Please wait...</Text>
-                  </View>
-              )}
+            {!isModelLoaded && !modelLoadError && (
+              <View style={styles.modelNotLoadedContainer}>
+                <Text style={styles.modelNotLoadedText}>AI Model is initializing. Please wait...</Text>
+              </View>
+            )}
 
-              {isModelLoaded && recommendedTopics.priorityTopics.length > 0 && (
-                <View style={styles.topicSection}>
-                  <Text style={styles.topicSectionTitle}>Priority Topics</Text>
-                  {recommendedTopics.priorityTopics.map((item, index) => (
-                    <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
-                      <Text style={styles.topicButtonText}>{item.topic}</Text>
-                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {isModelLoaded && recommendedTopics.otherTopics.length > 0 && (
-                <View style={styles.topicSection}>
-                  <Text style={styles.topicSectionTitle}>Other Topics</Text>
-                  {recommendedTopics.otherTopics.map((item, index) => (
-                    <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
-                      <Text style={styles.topicButtonText}>{item.topic}</Text>
-                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {isModelLoaded && (
-                <View style={styles.customTopicSection}>
-                  <Text style={styles.topicSectionTitle}>Or Enter Your Own Topic</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Custom Topic (e.g., 'Space Exploration')"
-                    value={customTopic}
-                    onChangeText={setCustomTopic}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Number of cards (1-20)"
-                    keyboardType="numeric"
-                    value={numberOfCards}
-                    onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))} // Restrict to numbers
-                    maxLength={2}
-                  />
-                  <TouchableOpacity style={styles.generateButton} onPress={handleGenerateContent} disabled={isLoadingContent || !isModelLoaded}>
-                    <Text style={styles.generateButtonText}>Generate Content</Text>
+            {isModelLoaded && recommendedTopics.priorityTopics.length > 0 && (
+              <View style={styles.topicSection}>
+                <Text style={styles.topicSectionTitle}>Priority Topics</Text>
+                {recommendedTopics.priorityTopics.map((item, index) => (
+                  <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
+                    <Text style={styles.topicButtonText}>{item.topic}</Text>
+                    <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
                   </TouchableOpacity>
-                </View>
-              )}
-            </>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-   );
+                ))}
+              </View>
+            )}
+
+            {isModelLoaded && recommendedTopics.otherTopics.length > 0 && (
+              <View style={styles.topicSection}>
+                <Text style={styles.topicSectionTitle}>Other Topics</Text>
+                {recommendedTopics.otherTopics.map((item, index) => (
+                  <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
+                    <Text style={styles.topicButtonText}>{item.topic}</Text>
+                    <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {isModelLoaded && (
+              <View style={styles.customTopicSection}>
+                <Text style={styles.topicSectionTitle}>Or Enter Your Own Topic</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Custom Topic (e.g., 'Space Exploration')"
+                  value={customTopic}
+                  onChangeText={setCustomTopic}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Number of cards (1-20)"
+                  keyboardType="numeric"
+                  value={numberOfCards}
+                  onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))} // Restrict to numbers
+                  maxLength={2}
+                />
+                <TouchableOpacity style={styles.generateButton} onPress={handleGenerateContent} disabled={isLoadingContent || !isModelLoaded}>
+                  <Text style={styles.generateButtonText}>Generate Content</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
