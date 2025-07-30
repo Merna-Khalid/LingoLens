@@ -16,7 +16,8 @@ export default function ChatHeader({ title, onBack, onShare, rightComponents }: 
         <Icon name="arrow-back" size={24} color="#000" />
       </TouchableOpacity>
       <Text style={styles.headerTitle}>{title}</Text>
-      <View style={styles.rightActions}>
+      {/* <View style=styles.rightActions> */}
+      <View >
           {rightComponents && rightComponents.map((component, index) => (
             <React.Fragment key={index}>{component}</React.Fragment>
           ))}

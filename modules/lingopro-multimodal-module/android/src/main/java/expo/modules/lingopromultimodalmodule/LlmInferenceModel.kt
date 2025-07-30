@@ -101,7 +101,7 @@ class LlmInferenceModel(
     /**
      * Generates text asynchronously with streaming results via callback
      */
-    fun generateResponseAsync(requestId: Int, prompt: String, imagePath:String , callback: (String) -> Unit) {
+    fun generateResponseAsync(requestId: Int, prompt: String, imagePath:String, callback: (String) -> Unit) {
         Log.d("LlmInferenceModel", "Starting async generate response for requestId: $requestId")
         this.requestId = requestId
         this.requestResult = ""

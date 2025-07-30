@@ -91,12 +91,15 @@ export interface BaseLlmReturn {
   generateResponse: (
     promptText: string,
     imagePath: string,
+    useTools: boolean,
     onPartial?: (partial: string, reqId: number | undefined) => void,
     onErrorCb?: (message: string, reqId: number | undefined) => void,
     abortSignal?: AbortSignal
   ) => Promise<string>;
   generateStreamingResponse: (
     promptText: string,
+    imagePath: string,
+    useTools: boolean,
     onPartial?: (partial: string, reqId: number) => void,
     onErrorCb?: (message: string, reqId: number) => void,
     abortSignal?: AbortSignal
@@ -169,6 +172,7 @@ export interface ExpoLlmMediapipeModule {
     requestId: number,
     prompt: string,
     imagePath: string,
+    useTools: boolean,
   ): Promise<string>;
 
   /**
@@ -183,6 +187,7 @@ export interface ExpoLlmMediapipeModule {
     requestId: number,
     prompt: string,
     imagePath: string,
+    useTools: boolean,
   ): Promise<boolean>;
 
   /**

@@ -149,6 +149,7 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
     async (
       promptText: string,
       imagePath: string,
+      useTools: boolean,
       onPartial?: (partial: string, reqId: number | undefined) => void,
       onErrorCb?: (message: string, reqId: number | undefined) => void,
       abortSignal?: AbortSignal,
@@ -170,7 +171,7 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
       });
 
       try {
-        return await module.generateResponse(modelHandle, requestId, promptText, '');
+        return await module.generateResponse(modelHandle, requestId, promptText, imagePath, useTools);
       } catch (e) {
         console.error("Generate response error:", e);
         if (onErrorCb && !(abortSignal?.aborted ?? false)) {
@@ -188,6 +189,8 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
   const generateStreamingResponse = React.useCallback(
     async (
       promptText: string,
+      imagePath: string,
+      useTools: boolean,
       onPartial?: (partial: string, reqId: number) => void,
       onErrorCb?: (message: string, reqId: number) => void,
       abortSignal?: AbortSignal,
@@ -221,7 +224,7 @@ function _useLLMDownloadable(props: UseLLMDownloadableProps): DownloadableLlmRet
           });
         }
 
-        module.generateResponseAsync(modelHandle, requestId, promptText, '')
+        module.generateResponseAsync(modelHandle, requestId, promptText, imagePath, useTools)
           .then(() => {
             if (!(abortSignal?.aborted ?? false)) {
               errorSubscription.remove();
@@ -331,6 +334,7 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
     async (
       promptText: string,
       imagePath: string,
+      useTools: boolean,
       onPartial?: (partial: string, reqId: number | undefined) => void,
       onErrorCb?: (message: string, reqId: number | undefined) => void,
       abortSignal?: AbortSignal,
@@ -352,7 +356,7 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
       });
 
       try {
-        return await module.generateResponse(modelHandle, requestId, promptText, '');
+        return await module.generateResponse(modelHandle, requestId, promptText, imagePath, useTools);
       } catch (e) {
         console.error("Generate response error:", e);
         if (onErrorCb && !(abortSignal?.aborted ?? false)) {
@@ -370,6 +374,8 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
   const generateStreamingResponse = React.useCallback(
     async (
       promptText: string,
+      imagePath: string,
+      useTools: boolean,
       onPartial?: (partial: string, reqId: number) => void,
       onErrorCb?: (message: string, reqId: number) => void,
       abortSignal?: AbortSignal,
@@ -403,7 +409,7 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
           });
         }
 
-        module.generateResponseAsync(modelHandle, requestId, promptText, '')
+        module.generateResponseAsync(modelHandle, requestId, promptText, imagePath, useTools)
           .then(() => {
             if (!(abortSignal?.aborted ?? false)) {
               errorSubscription.remove();
@@ -441,6 +447,8 @@ function _useLLMBase(props: UseLLMAssetProps | UseLLMFileProps): BaseLlmReturn {
 export function generateStreamingText(
   modelHandle: number,
   prompt: string,
+  imagePath: string,
+  useTools: boolean,
   onPartialResponse?: (text: string, requestId: number) => void,
   onError?: (error: string, requestId: number) => void,
   abortSignal?: AbortSignal,
@@ -506,7 +514,7 @@ export function generateStreamingText(
     }
 
     module
-      .generateResponseAsync(modelHandle, requestId, prompt, '')
+      .generateResponseAsync(modelHandle, requestId, prompt, imagePath, useTools)
       .then(() => {
         if (!(abortSignal?.aborted ?? false)) {
           partialSubscription.remove();
