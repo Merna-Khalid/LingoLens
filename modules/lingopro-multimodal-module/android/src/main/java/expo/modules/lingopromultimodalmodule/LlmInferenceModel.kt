@@ -15,6 +15,9 @@ import java.io.InputStream
 import java.io.IOException // Added for IOException
 import android.util.Log // Added for Log
 
+
+private const val MAX_IMAGE_SIZE = 224
+
 // Interface for callbacks from the LlmInferenceModel to the native module
 interface InferenceListener {
     fun logging(model: LlmInferenceModel, message: String)
@@ -173,13 +176,23 @@ class LlmInferenceModel(
      * Generates text synchronously and returns the complete response
      */
     fun generateResponse(requestId: Int, prompt: String, imagePath: String): String {
-        Log.d("LlmInferenceModel", "Starting synchronous generate response for requestId: $requestId")
-        this.requestId = requestId
-        this.requestResult = ""
+        Log.d("LlmInferenceModel", "Starting generate response for requestId: $requestId")
+
+        synchronized(this) {
+            this.requestId = requestId
+            this.requestResult = ""
+        }
+
+        var session: LlmInferenceSession? = null
+        var inputStream: InputStream? = null
+        var bitmap: Bitmap? = null
 
         return try {
-            // Re-create session for each query to ensure clean state
-            llmInferenceSession.close()
+            try {
+                llmInferenceSession?.close()
+            } catch (e: Exception) {
+                Log.w("LlmInferenceModel", "Failed to close old session: ${e.message}")
+            }
 
             val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                 .setTemperature(temperature)
@@ -188,48 +201,73 @@ class LlmInferenceModel(
                 .setGraphOptions(GraphOptions.builder().setEnableVisionModality(multiModal).build())
                 .build()
 
-            llmInferenceSession = LlmInferenceSession.createFromOptions(llmInference, sessionOptions)
+            session = LlmInferenceSession.createFromOptions(llmInference, sessionOptions)
+            llmInferenceSession = session
 
-            // Add the prompt to the session
-            llmInferenceSession.addQueryChunk(prompt)
+            session.addQueryChunk(prompt)
 
-            // Add image to the session (if multiModal is enabled)
             if (multiModal && imagePath.isNotEmpty()) {
-                val imageUri = Uri.parse(imagePath)
-                val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
-                if (inputStream != null) {
-                    // Use a nullable Bitmap and safe calls
-                    val bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream)
+                try {
+                    val uri = Uri.parse(imagePath)
+                    inputStream = context.contentResolver.openInputStream(uri)
 
-                    // Close the input stream in a finally block or after use
-                    // It's crucial to close streams even if an error occurs during bitmap decoding
-                    try {
-                        if (bitmap != null) {
-                            val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
-                            llmInferenceSession.addImage(mpImage)
-                        } else {
-                            Log.d("LlmInferenceModel", "Warning: Could not decode bitmap from stream for image URI: ${imageUri}")
+                    inputStream?.let { stream ->
+                        // Step 1: Decode only bounds to check image size
+                        val options = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
                         }
-                    } finally {
-                        // Ensure the input stream is closed
-                        try {
-                            inputStream.close()
-                        } catch (e: IOException) {
-                            Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                        BitmapFactory.decodeStream(stream, null, options)
+                        val originalWidth = options.outWidth
+                        val originalHeight = options.outHeight
+
+                        // Step 2: Determine scale factor
+                        val largestDim = originalWidth.coerceAtLeast(originalHeight)
+                        val sampleSize = if (largestDim > MAX_IMAGE_SIZE) {
+                            Integer.highestOneBit(largestDim / MAX_IMAGE_SIZE) * 2
+                        } else 1
+
+                        // Re-open stream for actual decode
+                        stream.close()
+                        inputStream = context.contentResolver.openInputStream(uri)
+
+                        val decodeOptions = BitmapFactory.Options().apply {
+                            inSampleSize = sampleSize
+                            inJustDecodeBounds = false
                         }
+                        bitmap = BitmapFactory.decodeStream(inputStream, null, decodeOptions)
+
+                        bitmap?.let {
+                            session.addImage(BitmapImageBuilder(it).build())
+                        } ?: Log.w("LlmInferenceModel", "Decoded bitmap is null")
                     }
+                } catch (e: Exception) {
+                    Log.w("LlmInferenceModel", "Image processing error: ${e.message}")
                 }
             }
+            Log.d("LlmInferenceModel", "here 1")
+            val result = session.generateResponse()
+            Log.d("LlmInferenceModel", "here 2")
+            inferenceListener?.onResults(this, requestId, result)
+            result
 
-            val result = llmInferenceSession.generateResponse()
-            inferenceListener?.onResults(this, requestId, result) // Send final result via listener
-            result // Return the final result
         } catch (e: Exception) {
-            Log.e("LlmInferenceModel", "Synchronous inference error: ${e.message}", e)
-            inferenceListener?.onError(this, requestId, e.message ?: "Unknown synchronous inference error")
-            throw e
+            Log.e("LlmInferenceModel", "Inference error", e)
+            inferenceListener?.onError(this, requestId, e.message ?: "Unknown error")
+            throw LlmInferenceException("Generation failed", e)
+        } finally {
+            try {
+                inputStream?.close()
+            } catch (e: IOException) {
+                Log.w("LlmInferenceModel", "Stream close error", e)
+            }
+            bitmap?.recycle()
+
+            if (session != llmInferenceSession) {
+                session?.close()
+            }
         }
     }
+
 
     /**
      * Close resources when no longer needed

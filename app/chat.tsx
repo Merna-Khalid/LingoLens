@@ -1,21 +1,40 @@
 import { ChatHeader, InputMode, MessageInput, MessageList, ModelLoadingOverlay } from '@/components/chat';
 import { ChatMessage as ChatMessageType } from '@/components/chat/types';
 import { AudioModule, AudioRecorder, RecorderState, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
+
+const ToolsToggle = ({ useAgenticTools, onToggle }: { useAgenticTools: boolean, onToggle: () => void }) => {
+  return (
+    <TouchableOpacity
+      style={[styles.toolsButton, useAgenticTools && styles.toolsButtonActive]}
+      onPress={onToggle}
+    >
+      <Text style={[styles.toolsButtonText, useAgenticTools && styles.toolsButtonTextActive]}>
+        {useAgenticTools ? '🔧 ON' : '🔧 OFF'}
+      </Text>
+    </TouchableOpacity>
+  );
+};
 
 export default function ChatScreen() {
   // Receive modelHandle along with photoUri and initialMode
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
 
-  const { modelHandle, isModelLoaded, setModelHandle, releaseLoadedModel } = useModel();
+  const {
+      modelHandle,
+      isModelLoaded,
+      isLoadingModel,
+      modelLoadError,
+      loadModel
+    } = useModel();
 
   // This variable has the newest uploaded image by the user.
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -33,48 +52,15 @@ export default function ChatScreen() {
   recordingStateRef.current = useAudioRecorderState(audioRecorder);
   const [uri, setUri] = useState<string>('');
   const audioPlayer = useAudioPlayer(uri);
-  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
-  const [isLoadingModel, setIsLoadingModel] = useState(false);
-  const isModelReady = isModelLoaded && modelHandle !== null;
 
-  const loadModel = async () => {
-    if (modelHandle !== null) {
-      console.log("modelHandle is not null")
-      setModelHandle(modelHandle);
-      return;
-    }
-    setIsLoadingModel(true);
-    setModelLoadError(null);
-    try {
-      if (!DEFAULT_MODEL_PATH) {
-        throw new Error("Model path is not set");
-      }
-      let modelPath = DEFAULT_MODEL_PATH;
-      if (modelPath.startsWith('file://')) {
-        modelPath = modelPath.slice(7);
-      }
-      const handle = await LingoProMultimodal.createModel(
-        modelPath,
-        1024, // maxTokens
-        3,    // topK
-        0.7,  // temperature
-        123, // random seed
-        true, // multimodal
-      );
-      setModelHandle(handle);
-      console.log("Model loaded successfully with handle:", handle);
-    } catch (error: any) {
-      setModelLoadError(`Failed to load AI model: ${error.message || 'Please go back to setup.'}`);
-      setModelHandle(null);
-    } finally {
-      setIsLoadingModel(false);
-    }
-  };
+  // Agentic mode activation
+  const [useAgenticTools, setUseAgenticTools] = useState(false);
+
   useEffect(() => {
-    loadModel();
-  }, []);
-
-
+      if (!isModelLoaded && !isLoadingModel) {
+        loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+      }
+    }, [isModelLoaded, isLoadingModel, loadModel]);
 
   const getTimestamp = () => {
     const now = new Date();
@@ -102,7 +88,7 @@ export default function ChatScreen() {
     }
 
     // If modelHandle is not valid, immediately show error and redirect
-    if (!isModelReady) {
+    if (!isModelLoaded) {
       return; // Exit early if model not ready
     }
 
@@ -123,15 +109,12 @@ export default function ChatScreen() {
       }
       Speech.stop();
     };
-  }, [paramImageUri, isModelReady]); // Depend on isModelReady
+  }, [paramImageUri, isModelLoaded]);
 
-  // useEffect(() => {
-  //   scrollViewRef.current?.scrollToEnd({ animated: true });
-  // }, [messages]);
 
   // --- Audio Recording Functions ---
   async function startRecording() {
-    if (!isModelReady) {
+    if (!isModelLoaded) {
       Alert.alert('AI Not Ready', 'The AI model is not loaded. Please load it first.');
       return;
     }
@@ -208,7 +191,7 @@ export default function ChatScreen() {
 
   // --- AI Message Processing ---
   const processMessageWithAI = async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
-    if (!isModelReady) {
+    if (!isModelLoaded) {
       Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
       return;
     }
@@ -233,6 +216,7 @@ export default function ChatScreen() {
         Math.floor(Math.random() * 1000000),
         textInput,
         msgImageUri ?? imageUri ?? '',
+        useAgenticTools
       );
       console.log("MediaPipe AI response:", aiResponseText);
 
@@ -326,6 +310,13 @@ export default function ChatScreen() {
       <ChatHeader
         title="AI Chat"
         onBack={() => router.back()}
+        rightComponent={ // <-- Singular prop name
+              <ToolsToggle
+                key="tools-toggle"
+                useTools={useAgenticTools}
+                onToggle={() => setUseAgenticTools(!useAgenticTools)}
+              />
+        }
       />
 
       <ModelLoadingOverlay isVisible={isLoadingModel} />
@@ -348,7 +339,7 @@ export default function ChatScreen() {
           selectedImage={selectedImage}
           isRecording={!!recording?.isRecording}
           waveformHeights={waveformHeights}
-          isModelReady={isModelReady}
+          isModelReady={isModelLoaded}
           isLoadingModel={isLoadingModel}
           onTextChange={setInputText}
           onSendText={handleSendText}
@@ -371,5 +362,22 @@ const styles = StyleSheet.create({
   keyboardAvoidingView: {
     flex: 1,
   },
-
+  toolsButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    backgroundColor: '#e0e0e0',
+    marginRight: 10,
+  },
+  toolsButtonActive: {
+    backgroundColor: '#007AFF',
+  },
+  toolsButtonText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  toolsButtonTextActive: {
+    color: '#fff',
+  }
 });

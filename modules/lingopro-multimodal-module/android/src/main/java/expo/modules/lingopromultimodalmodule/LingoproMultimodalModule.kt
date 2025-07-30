@@ -237,21 +237,6 @@ class LingoproMultimodalModule : Module() {
             required = requiredWordFields
         ),
         createToolDefinition(
-            name = "bulkInsertWords",
-            description = "Insert a list of words into the database",
-            properties = JSONObject().apply {
-                put("words", JSONObject().apply {
-                    put("type", "array")
-                    put("items", JSONObject().apply {
-                        put("type", "object")
-                        put("properties", wordProperties)
-                        put("required", JSONArray(requiredWordFields))
-                    })
-                })
-            },
-            required = listOf("words")
-        ),
-        createToolDefinition(
             name = "getWordsByLanguage",
             description = "Fetch all words for a given language",
             properties = JSONObject().apply {
@@ -268,39 +253,41 @@ class LingoproMultimodalModule : Module() {
             },
             required = listOf("language", "category1")
         ),
-        createToolDefinition(
-            name = "getWordsBySubcategory",
-            description = "Fetch words by subcategory for a given language",
-            properties = JSONObject().apply {
-                put("language", JSONObject().apply { put("type", "string") })
-                put("category2", JSONObject().apply { put("type", "string") })
-            },
-            required = listOf("language", "category2")
-        ),
-        createToolDefinition(
-            name = "getWordsByTag",
-            description = "Fetch words by tag for a given language",
-            properties = JSONObject().apply {
-                put("language", JSONObject().apply { put("type", "string") })
-                put("tag", JSONObject().apply { put("type", "string") })
-            },
-            required = listOf("language", "tag")
-        )
     )
+
+    fun summarizeTools(tools: List<JSONObject>): String {
+        return tools.mapIndexed { index, tool ->
+            val name = tool.optString("name", "unknown")
+            val description = tool.optString("description", "No description")
+            val requiredArray = tool.optJSONArray("required")
+            val required = if (requiredArray != null) {
+                (0 until requiredArray.length()).joinToString(", ") { i ->
+                    requiredArray.optString(i, "")
+                }
+            } else {
+                "none"
+            }
+            "${index + 1}. $name - $description. Requires: $required"
+        }.joinToString("\n")
+    }
 
 
     private fun parseToolCalls(response: String): List<JSONObject> {
         return try {
-            val json = JSONObject(response)
-            if (json.has("tools")) {
-                json.getJSONArray("tools").let { array ->
-                    (0 until array.length()).map { array.getJSONObject(it) }
-                }
-            } else emptyList()
+            val jsonRegex = Regex("""\{(?:[^{}]|(?R))*\}""")
+            val jsonMatch = jsonRegex.find(response.trim()) ?: return emptyList()
+            val json = JSONObject(jsonMatch.value)
+
+            val toolsArray = json.optJSONArray("tools") ?: return emptyList()
+            (0 until toolsArray.length()).mapNotNull { i ->
+                toolsArray.optJSONObject(i)?.takeIf { it.has("name") && it.has("parameters") }
+            }
         } catch (e: Exception) {
-            emptyList() // Not a tool call
+            Log.d(TAG, "Failed to parse tool calls: ${e.message}")
+            emptyList()
         }
     }
+
 
     private fun executeTool(toolCall: JSONObject): JSONObject {
         return try {
@@ -550,7 +537,7 @@ class LingoproMultimodalModule : Module() {
 
 
 
-        AsyncFunction("generateTopicCards") { params: Map<String, Any>, promise: Promise ->
+        AsyncFunction("generateTopicCards") { handle: Int, requestId: Int, params: Map<String, Any>, promise: Promise ->
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val topic = params["topic"] as String
@@ -560,8 +547,11 @@ class LingoproMultimodalModule : Module() {
 
                     if (count !in 1..20) throw IllegalArgumentException("Count must be 1-20")
 
-                    val model = activeModelHandle?.let { modelMap[it] }
-                        ?: throw IllegalStateException("No model loaded")
+                    val model = modelMap[handle] ?: run {
+                        Log.e(TAG, "Model not found for handle $handle")
+                        promise.reject("INVALID_HANDLE", "Model not found", null)
+                        return@launch
+                    }
 
                     val prompt = """
                     Generate $count basic $language vocabulary words about $topic.
@@ -578,7 +568,7 @@ class LingoproMultimodalModule : Module() {
                 """.trimIndent()
 
                     val response =
-                        model.generateResponse(0, prompt, "") // Blocking call for simplicity
+                        model.generateResponse(requestId, prompt, "") // Blocking call for simplicity
                     val jsonResponse = JSONObject(response)
                     val wordsArray = jsonResponse.getJSONArray("words")
 
@@ -612,43 +602,68 @@ class LingoproMultimodalModule : Module() {
         }
 
 
-        AsyncFunction("getRecommendedTopics") { language: String, count: Int, promise: Promise ->
+        AsyncFunction("getRecommendedTopics") { handle: Int, requestId: Int, language: String, count: Int, promise: Promise ->
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     // 1. First try to get from database
-                    val dbTopics = dbHelper.getRecommendedTopics(language)
+                    val dbTopics = try {
+                        dbHelper.getRecommendedTopics(language).also {
+                            Log.d(TAG, "📦 Fetched ${it.size} topics from DB: $it")
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "❌ Error fetching topics from DB", e)
+                        emptyList()
+                    }
 
-                    // 2. If we don't have enough, generate via LLM
                     val finalTopics = if (dbTopics.size >= count) {
                         dbTopics.take(count)
                     } else {
-                        val model = activeModelHandle?.let { modelMap[it] }
-                            ?: throw IllegalStateException("No model loaded")
-
                         val prompt = """
                     Suggest $count common vocabulary topics for learning $language.
                     Return ONLY a JSON array like: ["family","food"].
                     Exclude any explanations or additional text.
                 """.trimIndent()
-                        Log.d(TAG, "Before Model")
-                        val response = model.generateResponse(0, prompt, "")
-                        Log.d(TAG, "After Model")
+
+                        val model = modelMap[handle] ?: run {
+                            Log.e(TAG, "Model not found for handle $handle")
+                            promise.reject("INVALID_HANDLE", "Model not found", null)
+                            return@launch
+                        }
+
+                        Log.d(TAG, "🧠 Prompting model with: $prompt")
+                        val response = try {
+                            model.generateResponse(requestId, prompt, "").also {
+                                Log.d(TAG, "✅ Model response: $it")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Error during LLM response", e)
+                            ""
+                        }
+
                         val llmTopics = try {
                             JSONArray(response).let { array ->
                                 (0 until array.length()).map { array.getString(it) }
+                            }.also {
+                                Log.d(TAG, "🧠 Parsed topics from LLM: $it")
                             }
                         } catch (e: Exception) {
-                            emptyList<String>()
+                            Log.e(TAG, "❌ Failed to parse model response", e)
+                            emptyList()
                         }
 
                         (dbTopics + llmTopics).distinct().take(count)
                     }
 
-                    // 3. Fallback if everything fails
-                    promise.resolve(JSONArray(
-                        finalTopics.ifEmpty { listOf("basics", "greetings", "food", "travel", "numbers") }
-                    ))
+                    val result = finalTopics.ifEmpty {
+                        listOf("basics", "greetings", "food", "travel", "numbers").also {
+                            Log.w(TAG, "⚠️ Using fallback topics: $it")
+                        }
+                    }
+
+                    Log.d(TAG, "✅ Final recommended topics: $result")
+                    promise.resolve(JSONArray(result))
                 } catch (e: Exception) {
+                    Log.e(TAG, "🔥 Failed to get recommended topics", e)
                     promise.reject("TOPIC_ERROR", "Failed to get recommended topics", e)
                 }
             }
@@ -816,11 +831,13 @@ class LingoproMultimodalModule : Module() {
             job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
-        AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
+        AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean,  promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val model = modelMap[handle] ?: run {
-                        promise.reject("INVALID_HANDLE", "Model not found", null)
+
+                    val model = modelMap[handle]
+                    if (model == null) {
+                        promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
                         return@launch
                     }
 
@@ -832,38 +849,56 @@ class LingoproMultimodalModule : Module() {
 
                     // Agentic implementation
                     // Step 1: Use the synchronous version
-                    val toolsPrompt = """
-                      Available Tools (JSON schema):
-                      ${availableTools.toString()}
-                      
-                      User Query: $prompt
-                      Respond with {"tools": [...]} if you need to call tools.
-                    """.trimIndent()
-
-                    val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
-
-                    // Step 2: Parse tool calls (simplified example)
-                    val toolCalls = parseToolCalls(rawResponse)
-                    if (toolCalls.isEmpty()) {
-                        // No tools needed; return raw response
-                        withContext(Dispatchers.Main) { promise.resolve(rawResponse) }
-                        return@launch
+                    if (!useTools) {
+                        Log.d(TAG, "Processing without tools")
+                        val modifiedPrompt = "If user is asking to add anything to SRS flash cards, ask them to activate the tools mode.\n" + prompt
+                        val response = model.generateResponse(requestId, modifiedPrompt, imagePath)
+                        Log.d(TAG, "Resposne ${response}")
+                        withContext(Dispatchers.Main) { promise.resolve(response) }
                     }
-                    // Step 3: Execute tools sequentially
-                    val toolResults = mutableListOf<JSONObject>()
-                    for (call in toolCalls.take(3)) { // Limit to 3 tools per run
-                        val result = executeTool(call)
-                        toolResults.add(result)
+                    else {
+
+                        Log.d(TAG, "Processing with tools enabled")
+                        val toolsPrompt = """
+                          You are allowed to use 3 tools only from the following tools (For language learning)
+                          Available Tools:
+                          ${summarizeTools(availableTools)}
+                          ------ START OF USER INPUT ------
+                          User Query: $prompt
+                          ------ END OF USER INPUT ------
+                          Respond with {"tools": [...]} if you need to call tools. 
+                          If you don't need any tools, respond to the user query and don't have any json in your answer
+                        """.trimIndent()
+
+                        val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+
+                        // Step 2: Parse tool calls (simplified example)
+                        val toolCalls = parseToolCalls(rawResponse)
+                        Log.d(TAG, "Parsed tool calls: ${toolCalls.size}")
+
+                        if (toolCalls.isEmpty()) {
+                            // No tools needed; return raw response
+                            Log.d(TAG, "No tools needed, returning raw response")
+                            withContext(Dispatchers.Main) {
+                                promise.resolve(rawResponse)
+                            }
+                        } else {
+                            // Step 3: Execute tools sequentially
+                            val toolResults = mutableListOf<JSONObject>()
+                            for (call in toolCalls.take(3)) {
+                                val result = executeTool(call)
+                                toolResults.add(result)
+                            }
+
+                            // Step 4: Send results back to the model for final response
+                            val finalResponse = model.generateResponse(
+                                requestId,
+                                "Tool results: ${toolResults.joinToString()}",
+                                imagePath
+                            )
+                            withContext(Dispatchers.Main) { promise.resolve(finalResponse) }
+                        }
                     }
-
-                    // Step 4: Send results back to the model for final response
-                    val finalResponse = model.generateResponse(
-                        requestId,
-                        "Tool results: ${toolResults.joinToString()}",
-                        imagePath
-                    )
-
-                    withContext(Dispatchers.Main) { promise.resolve(finalResponse) }
                 } catch (e: Exception) {
                     Log.e(TAG, "generateResponse: Inference error: ${e.message}", e)
                     sendEvent("logging", mapOf(
@@ -873,11 +908,21 @@ class LingoproMultimodalModule : Module() {
                     withContext(Dispatchers.Main) { promise.reject("GENERATION_FAILED", e.message ?: "Unknown error", e) }
                 }
             }
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+            job.invokeOnCompletion { exception ->
+                synchronized(activeJobs) {
+                    activeJobs.remove(job)
+                }
+                if (exception is CancellationException) {
+                    promise.reject("CANCELLED", "Operation cancelled", exception)
+                }
+            }
+
+            synchronized(activeJobs) {
+                activeJobs.add(job)
+            }
         }
 
-        AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, promise: Promise ->
+        AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
                     val model = modelMap[handle]

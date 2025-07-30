@@ -6,18 +6,26 @@ interface ChatHeaderProps {
   title: string;
   onBack: () => void;
   onShare?: () => void;
+  rightComponents?: React.ReactNode[];
 }
 
-export default function ChatHeader({ title, onBack, onShare }: ChatHeaderProps) {
+export default function ChatHeader({ title, onBack, onShare, rightComponents }: ChatHeaderProps) {
   return (
     <View style={styles.header}>
       <TouchableOpacity style={styles.backButton} onPress={onBack}>
         <Icon name="arrow-back" size={24} color="#000" />
       </TouchableOpacity>
       <Text style={styles.headerTitle}>{title}</Text>
-      <TouchableOpacity style={styles.shareButton} onPress={onShare}>
-        <Text style={styles.shareButtonText}>📤</Text>
-      </TouchableOpacity>
+      <View style={styles.rightActions}>
+          {rightComponents && rightComponents.map((component, index) => (
+            <React.Fragment key={index}>{component}</React.Fragment>
+          ))}
+          {onShare && (
+            <TouchableOpacity style={styles.shareButton} onPress={onShare}>
+              <Text style={styles.shareButtonText}>📤</Text>
+            </TouchableOpacity>
+          )}
+      </View>
     </View>
   );
 }

@@ -1,13 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, SafeAreaView } from 'react-native';
-import { Ionicons, AntDesign } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useLocalSearchParams } from 'expo-router';
+import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import { useModel } from '../context/ModelContext';
-
+import { DEFAULT_MODEL_PATH } from "../initial-page";
 
 interface TopicPreview {
   topic: string;
@@ -34,7 +33,13 @@ const PROGRESS_KEY = 'lingopro_language_progress';
 
 export default function LearningPage() {
   const router = useRouter();
-  const { isModelLoaded, loadModel, isLoadingModel, modelLoadError } = useModel();
+  const {
+        modelHandle,
+        isModelLoaded,
+        isLoadingModel,
+        modelLoadError,
+        loadModel
+  } = useModel();
 
   const loadUserSettings = async () => {
       try {
@@ -58,6 +63,13 @@ export default function LearningPage() {
   const [customTopic, setCustomTopic] = useState('');
   const [numberOfCards, setNumberOfCards] = useState('5'); // Default to 5 cards
 
+  useEffect(() => {
+        if (!isModelLoaded && !isLoadingModel) {
+          loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+
+        }
+  }, [isModelLoaded, isLoadingModel, loadModel]);
+
   // --- Fetch Recommendations Effect ---
   useEffect(() => {
     loadUserSettings();
@@ -70,8 +82,8 @@ export default function LearningPage() {
       }
       setIsLoadingContent(true);
       try {
-          const userId = 1; // Placeholder userId, replace with actual user ID if available
-          const topicStrings: string[] = await LingoProMultimodal.getRecommendedTopics(selectedLanguage, 10);
+          const count = 10;
+          const topicStrings: string[] = await LingoProMultimodal.getRecommendedTopics(modelHandle, Math.floor(Math.random() * 1000000), selectedLanguage, count);
 
           const previews: TopicPreview[] = await Promise.all(
             topicStrings.map(async (topic) => {
@@ -93,7 +105,7 @@ export default function LearningPage() {
           console.error('Error fetching recommendations:', error);
           Alert.alert('Error', `Failed to get learning recommendations: ${error.message}`);
         } finally {
-          setIsLoading(false); // End general loading
+          setIsLoadingContent(false); // End general loading
         }
       };
       fetchRecommendations();
@@ -122,6 +134,8 @@ export default function LearningPage() {
 
     try {
       const result = await LingoProMultimodal.generateTopicCards({
+              handle: modelHandle,
+              requestId: Math.floor(Math.random() * 1000000),
               topic: topicToUse,
               language: selectedLanguage,
               count: count,
@@ -160,23 +174,22 @@ export default function LearningPage() {
 
     return (
       <SafeAreaView style={styles.fullPageContainer}>
-        {/* Header for Learning Page */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <AntDesign name="arrowleft" size={24} color="#333" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Learning Topics</Text>
-          <View style={styles.badgePlaceholder} /> {/* Placeholder for alignment */}
+          <View style={styles.badgePlaceholder} />
         </View>
 
         <ScrollView style={styles.contentScrollView}>
-          {isLoadingModel || isLoadingContent ? ( // Show loading if model is loading OR content is loading
+          {isLoadingModel || isLoadingContent ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#6200EE" />
               <Text style={styles.loadingText}>
                 {isLoadingModel ? "Loading AI model..." : "Loading topics or generating content..."}
               </Text>
-              {modelLoadError && !isModelLoaded && ( // Show retry button only if there was an error and model is not loaded
+              {modelLoadError && !isModelLoaded && (
                   <View style={styles.modelNotLoadedContainer}>
                       <Text style={styles.modelNotLoadedText}>{modelLoadError}</Text>
                       <TouchableOpacity style={styles.retryButton} onPress={loadModel}>
@@ -189,7 +202,6 @@ export default function LearningPage() {
             <>
               <Text style={styles.learningTitle}>Choose a Topic to Learn</Text>
 
-              {/* If model is not loaded and no error, it means it's still attempting to load automatically */}
               {!isModelLoaded && !modelLoadError && (
                   <View style={styles.modelNotLoadedContainer}>
                       <Text style={styles.modelNotLoadedText}>AI Model is initializing. Please wait...</Text>
@@ -220,7 +232,7 @@ export default function LearningPage() {
                 </View>
               )}
 
-              {isModelLoaded && ( // Only show custom topic section if model is loaded
+              {isModelLoaded && (
                 <View style={styles.customTopicSection}>
                   <Text style={styles.topicSectionTitle}>Or Enter Your Own Topic</Text>
                   <TextInput
@@ -237,7 +249,7 @@ export default function LearningPage() {
                     onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))} // Restrict to numbers
                     maxLength={2}
                   />
-                  <TouchableOpacity style={styles.generateButton} onPress={handleGenerateContent} disabled={isLoadingContent || !modelLoaded}>
+                  <TouchableOpacity style={styles.generateButton} onPress={handleGenerateContent} disabled={isLoadingContent || !isModelLoaded}>
                     <Text style={styles.generateButtonText}>Generate Content</Text>
                   </TouchableOpacity>
                 </View>

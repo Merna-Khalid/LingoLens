@@ -5,6 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
+import { useModel } from '../context/ModelContext';
+import { DEFAULT_MODEL_PATH } from "../initial-page";
 
 type Word = {
   id: number;
@@ -38,6 +40,14 @@ const PROGRESS_KEY = 'lingopro_language_progress';
 export default function SRSSystem() {
   const router = useRouter();
 
+  const {
+          modelHandle,
+          isModelLoaded,
+          isLoadingModel,
+          modelLoadError,
+          loadModel
+    } = useModel();
+
   const [isDbInitialized, setIsDbInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentCard, setCurrentCard] = useState<Card | null>(null);
@@ -58,6 +68,7 @@ export default function SRSSystem() {
   });
 
   const [selectedLanguage, setSelectedLanguage] = useState('English');
+
 
   useEffect(() => {
       const initializeDbStatus = async () => {
@@ -89,7 +100,11 @@ export default function SRSSystem() {
       };
 
       initializeDbStatus();
-    }, []);
+      if (!isModelLoaded && !isLoadingModel) {
+          loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+
+        }
+    }, [isModelLoaded, isLoadingModel, loadModel]);
 
     useEffect(() => {
         if (isDbInitialized) {

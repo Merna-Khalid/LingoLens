@@ -95,7 +95,6 @@ const styles = StyleSheet.create({
   messageText: {
     fontSize: 16,
     color: '#333',
-    flexShrink: 1,
   },
   messageImage: {
     width: 150,

@@ -1,14 +1,23 @@
 import LingoProMultimodal from 'lingopro-multimodal-module';
-import React, { createContext, ReactNode, useCallback, useContext, useState } from 'react';
+import React, {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState
+} from 'react';
 import { Alert } from 'react-native';
-
 
 // Define the shape of the context value
 interface ModelContextType {
   modelHandle: number | null;
   isModelLoaded: boolean;
-  setModelHandle: (handle: number | null) => void;
-  releaseLoadedModel: () => Promise<void>; // Function to release the model
+  isLoadingModel: boolean;
+  modelLoadError: string | null;
+  loadModel: (modelPath: string) => Promise<void>;
+  releaseLoadedModel: () => Promise<void>;
 }
 
 // Create the context with a default (null) value
@@ -20,52 +29,93 @@ interface ModelProviderProps {
 }
 
 /**
- * Provides the model handle, loading status, and model management functions to its children components.
+ * Provides the model handle and loading status to its children components.
  * Manages the global state of the loaded AI model.
  */
 export const ModelProvider: React.FC<ModelProviderProps> = ({ children }) => {
-  const [modelHandle, setModelHandleState] = useState<number | null>(null);
-  const [isModelLoaded, setIsModelLoaded] = useState<boolean>(false);
-  const [isLoadingModel, setIsLoadingModel] = useState<boolean>(false);
-  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+  const [modelHandle, setModelHandle] = useState<number | null>(null);
+    const [isModelLoaded, setIsModelLoaded] = useState<boolean>(false);
+    const [isLoadingModel, setIsLoadingModel] = useState<boolean>(false);
+    const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+    const isLoadingRef = useRef<boolean>(false);
 
   // Use a ref to store the actual model handle for cleanup,
   // as modelHandle state might be nullified before cleanup runs.
-  const modelHandleRef = useRef<number | null>(null);
+  const loadModel = useCallback(async (modelPath: string) => {
+      if (modelHandle !== null || isLoadingRef.current) {
+        console.log("Model already loaded or loading");
+        return;
+      }
 
-  useEffect(() => {
-    modelHandleRef.current = modelHandle;
-    setIsModelLoaded(modelHandle !== null);
+      isLoadingRef.current = true;
+      setIsLoadingModel(true);
+      setModelLoadError(null);
+
+      try {
+        if (!modelPath) {
+          throw new Error("Model path is not set");
+        }
+
+        // Remove file:// prefix if present
+        const cleanedModelPath = modelPath.startsWith('file://')
+          ? modelPath.slice(7)
+          : modelPath;
+
+        const handle = await LingoProMultimodal.createModel(
+          cleanedModelPath,
+          1024, // maxTokens
+          3,    // topK
+          0.7,  // temperature
+          123,  // random seed
+          true  // multimodal
+        );
+
+        setModelHandle(handle);
+        setIsModelLoaded(true);
+        console.log("Model loaded successfully with handle:", handle);
+      } catch (error: any) {
+        setModelLoadError(`Failed to load AI model: ${error.message || 'Unknown error'}`);
+        setModelHandle(null);
+        setIsModelLoaded(false);
+      } finally {
+        setIsLoadingModel(false);
+        isLoadingRef.current = false;
+      }
   }, [modelHandle]);
-
-  // Function to set the model handle
-  const setModelHandle = useCallback((handle: number | null) => {
-    setModelHandleState(handle);
-  }, []);
 
   // Function to release the currently loaded model
   const releaseLoadedModel = useCallback(async () => {
-      if (modelHandleRef.current !== null) {
-        try {
-          console.log(`Attempting to release model with handle: ${modelHandleRef.current} via ModelContext.`);
-          await LingoProMultimodal.releaseModel(modelHandleRef.current);
-          console.log(`Successfully released model ${modelHandleRef.current} via ModelContext.`);
-          setModelHandleState(null); // Clear the handle from context state
-        } catch (error: any) {
-          console.error("Error releasing model via context:", error);
-          Alert.alert("Error Releasing Model", error.message || "An unknown error occurred while releasing the model.");
-        }
-      } else {
-        console.log("No model handle to release in context.");
+      if (modelHandle === null) return;
+
+      try {
+        console.log(`Releasing model with handle: ${modelHandle}`);
+        await LingoProMultimodal.releaseModel(modelHandle);
+        setModelHandle(null);
+        setIsModelLoaded(false);
+        setModelLoadError(null);
+      } catch (error: any) {
+        console.error("Error releasing model:", error);
+        Alert.alert("Error Releasing Model", error.message || "Failed to release model");
       }
-    }, []);
+  }, [modelHandle]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+        if (modelHandle !== null) {
+          releaseLoadedModel().catch(console.error);
+        }
+    };
+  }, [modelHandle, releaseLoadedModel]);
 
   const contextValue = React.useMemo(() => ({
-    modelHandle,
-    isModelLoaded,
-    setModelHandle,
-    releaseLoadedModel,
-  }), [modelHandle, isModelLoaded, setModelHandle, releaseLoadedModel]);
+      modelHandle,
+      isModelLoaded,
+      isLoadingModel,
+      modelLoadError,
+      loadModel,
+      releaseLoadedModel,
+    }), [modelHandle, isModelLoaded, isLoadingModel, modelLoadError, loadModel, releaseLoadedModel]);
 
   return (
     <ModelContext.Provider value={contextValue}>
@@ -74,10 +124,7 @@ export const ModelProvider: React.FC<ModelProviderProps> = ({ children }) => {
   );
 };
 
-/**
- * Custom hook to consume the ModelContext.
- * Throws an error if used outside of a ModelProvider.
- */
+
 export const useModel = () => {
   const context = useContext(ModelContext);
   if (context === undefined) {

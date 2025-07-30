@@ -104,8 +104,12 @@ export default function MessageInput({
           </View>
 
           <View style={styles.controlsRow}>
-            <TouchableOpacity style={styles.controlButton}>
-              <Text style={styles.controlIcon}>🎤</Text>
+            <TouchableOpacity
+              style={[styles.controlButton, isDisabled && styles.disabledButton]}
+              onPress={onToggleMode}
+              disabled={isDisabled}
+            >
+              <Text style={styles.controlIcon}>📝</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
