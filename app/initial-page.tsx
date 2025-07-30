@@ -68,6 +68,7 @@ export default function InitialPage() {
             if (exists) {
               // If file exists, set state to 'downloaded' (meaning file is present, but not loaded into memory)
               setAppUIState('downloaded');
+              navigateToWelcomeScreen();
               addLog("Default model file found on disk. Ready to load.");
             } else {
               // If file doesn't exist, offer options to download or load from file
