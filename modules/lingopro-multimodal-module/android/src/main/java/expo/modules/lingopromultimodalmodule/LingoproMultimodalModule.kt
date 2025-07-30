@@ -851,8 +851,13 @@ class LingoproMultimodalModule : Module() {
                     // Step 1: Use the synchronous version
                     if (!useTools) {
                         Log.d(TAG, "Processing without tools")
-                        val modifiedPrompt = "If user is asking to add anything to SRS flash cards, ask them to activate the tools mode.\n" + prompt
-                        val response = model.generateResponse(requestId, modifiedPrompt, imagePath)
+                        val systemMessage = "If the user asks to add anything to SRS flashcards, guide them to activate tools mode first."
+                        val messages = listOf(
+                            ChatMessage(role = "system", content = systemMessage),
+                            ChatMessage(role = "user", content = prompt)
+                        )
+
+                        val response = model.generateResponse(requestId, messages, imagePath)
                         Log.d(TAG, "Resposne ${response}")
                         withContext(Dispatchers.Main) { promise.resolve(response) }
                     }
@@ -860,16 +865,22 @@ class LingoproMultimodalModule : Module() {
 
                         Log.d(TAG, "Processing with tools enabled")
                         val toolsPrompt = """
-                          You are allowed to use 3 tools only from the following tools (For language learning)
-                          Available Tools:
-                          ${summarizeTools(availableTools)}
-                          ------ START OF USER INPUT ------
-                          User Query: $prompt
-                          ------ END OF USER INPUT ------
-                          Respond with {"tools": [...]} if you need to call tools. 
-                          If you don't need any tools, respond to the user query and don't have any json in your answer
+                            You are a language learning assistant with access to specific tools. 
+                            Carefully analyze the user's request and determine if tool usage is required.
+                        
+                            # Available Tools:
+                            ${summarizeTools(availableTools).trimIndent()}
+                        
+                            # Response Format:
+                            - If tools are needed, respond ONLY with valid JSON format:
+                              ```json
+                              {"tools": ["tool_name", ...]}
+                              ```
+                            - If no tools are needed, respond naturally to the user's query without any JSON.
+                        
+                            # Current Query:
+                            $prompt
                         """.trimIndent()
-
                         val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
 
                         // Step 2: Parse tool calls (simplified example)
