@@ -852,12 +852,9 @@ class LingoproMultimodalModule : Module() {
                     if (!useTools) {
                         Log.d(TAG, "Processing without tools")
                         val systemMessage = "If the user asks to add anything to SRS flashcards, guide them to activate tools mode first."
-                        val messages = listOf(
-                            ChatMessage(role = "system", content = systemMessage),
-                            ChatMessage(role = "user", content = prompt)
-                        )
+                        val modifiedPrompt = "When discussing SRS flashcards, please remind users they need to be in tools mode. Now, regarding your question: $prompt"
 
-                        val response = model.generateResponse(requestId, messages, imagePath)
+                        val response = model.generateResponse(requestId, modifiedPrompt, imagePath)
                         Log.d(TAG, "Resposne ${response}")
                         withContext(Dispatchers.Main) { promise.resolve(response) }
                     }
