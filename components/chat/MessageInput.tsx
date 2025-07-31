@@ -16,6 +16,7 @@ interface MessageInputProps {
   waveformHeights: number[];
   isModelReady: boolean;
   isLoadingModel: boolean;
+  isStreamingMessage: boolean;
   onTextChange: (text: string) => void;
   onSendText: () => void;
   onImageSelect: () => void;
@@ -25,11 +26,12 @@ interface MessageInputProps {
   onStopRecording: () => void;
 }
 
-export default function MessageInput({
+export default React.memo(function MessageInput({
   currentMode,
   inputText,
   selectedImage,
   isRecording,
+  isStreamingMessage,
   waveformHeights,
   isModelReady,
   isLoadingModel,
@@ -41,7 +43,7 @@ export default function MessageInput({
   onStartRecording,
   onStopRecording,
 }: MessageInputProps) {
-  const isDisabled = !isModelReady || isLoadingModel;
+  const isDisabled = !isModelReady || isLoadingModel || isStreamingMessage;
 
   return (
     <View style={styles.inputAreaContainer}>
@@ -132,7 +134,7 @@ export default function MessageInput({
       )}
     </View>
   );
-}
+})
 
 const styles = StyleSheet.create({
   inputAreaContainer: {

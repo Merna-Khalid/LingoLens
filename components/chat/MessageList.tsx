@@ -5,16 +5,18 @@ import { ChatMessage as ChatMessageType } from './types';
 
 interface MessageListProps {
   messages: ChatMessageType[];
+  streamedMessage: ChatMessageType | null;
   aiThinking: boolean;
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
 }
 
-export default function MessageList({ 
-  messages, 
-  aiThinking, 
-  onPlayVoiceMessage, 
-  onPlayAiAudio 
+export default React.memo(function MessageList({
+  messages,
+  streamedMessage,
+  aiThinking,
+  onPlayVoiceMessage,
+  onPlayAiAudio
 }: MessageListProps) {
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -36,6 +38,14 @@ export default function MessageList({
           onPlayAiAudio={onPlayAiAudio}
         />
       ))}
+
+      {streamedMessage && (
+        <ChatMessage
+          key={streamedMessage.id}
+          message={streamedMessage}
+          onPlayVoiceMessage={onPlayVoiceMessage}
+          onPlayAiAudio={onPlayAiAudio}
+        />)}
       {aiThinking && (
         <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
           <ActivityIndicator size="small" color="#333" />
@@ -44,7 +54,7 @@ export default function MessageList({
       )}
     </ScrollView>
   );
-}
+})
 
 const styles = StyleSheet.create({
   chatContainer: {

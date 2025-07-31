@@ -1,17 +1,17 @@
 import { ChatHeader, InputMode, MessageInput, MessageList, ModelLoadingOverlay } from '@/components/chat';
 import { ChatMessage as ChatMessageType } from '@/components/chat/types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AudioModule, AudioRecorder, RecorderState, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
-import LingoProMultimodal from 'lingopro-multimodal-module';
-import React, { useEffect, useRef, useState } from 'react';
+import { default as ExpoLlmMediapipe, default as LingoProMultimodal, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LANGUAGE_KEY, LEVEL_KEY, PROGRESS_KEY } from './main-page'
+import { LANGUAGE_KEY, LEVEL_KEY } from './main-page';
 
 const ToolsToggle = ({ useAgenticTools, onToggle }: { useAgenticTools: boolean, onToggle: () => void }) => {
   return (
@@ -43,6 +43,9 @@ export default function ChatScreen() {
   const [currentMode, setCurrentMode] = useState<InputMode>('text');
   const [recording, setRecording] = useState<AudioRecorder | undefined>();
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
+  const [iSStreamingMessage, setIsStreamingMessage] = useState<boolean>(false);
+  const [streamedMessage, setStreamedMessage] = useState<ChatMessageType | null>(null);
+
   const [aiThinking, setAiThinking] = useState(false);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -57,6 +60,15 @@ export default function ChatScreen() {
 
   // Agentic mode activation
   const [useAgenticTools, setUseAgenticTools] = useState(false);
+
+  const nextRequestIdRef = useRef(0);
+  const streamingListenersRef = useRef<NativeModuleSubscription[]>([]);
+
+
+  const clearStreamingListeners = useCallback(() => {
+    streamingListenersRef.current.forEach(sub => sub.remove());
+    streamingListenersRef.current = [];
+  }, [streamingListenersRef]);
 
   useEffect(() => {
     if (!isModelLoaded && !isLoadingModel) {
@@ -114,8 +126,9 @@ export default function ChatScreen() {
   }, [paramImageUri, isModelLoaded]);
 
 
+
   // --- Audio Recording Functions ---
-  async function startRecording() {
+  const startRecording = useCallback(async () => {
     if (!isModelLoaded) {
       Alert.alert('AI Not Ready', 'The AI model is not loaded. Please load it first.');
       return;
@@ -141,9 +154,138 @@ export default function ChatScreen() {
       console.error('Failed to start recording', err);
       Alert.alert('Recording Error', 'Failed to start recording. Please check microphone permissions.');
     }
-  }
+  }, [isModelLoaded, audioRecorder]);
 
-  async function stopRecording() {
+
+  const processMessageWithAI = useCallback(async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
+    if (!isModelLoaded) {
+      Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
+      return;
+    }
+
+    setAiThinking(true);
+    // No need to update voice message text since it's already showing as "Voice message"
+    try {
+      if (!modelHandle) {
+        throw new Error("modelHandle is null.");
+      }
+
+      if (streamedMessage) {
+        setMessages(prevMessages => {
+          if (prevMessages.length === 0) {
+            return [streamedMessage]; // If no messages, just add it
+          }
+
+          // Insert before last message
+          return [
+            ...prevMessages.slice(0, -1), // All except last
+            streamedMessage,              // New streamed message
+            prevMessages[prevMessages.length - 1] // Last message
+          ];
+        });
+        setStreamedMessage(null);
+        setIsStreamingMessage(false);
+      }
+      clearStreamingListeners();
+
+      // Since gemma-3n only has a maximum of 1 image per session
+      // we set the last uploaded image as the imageUri
+      if (msgImageUri) {
+        setImageUri(msgImageUri);
+      }
+
+
+      console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
+      // Pass the modelHandle to the native module
+
+      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
+      // const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
+      const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
+
+      const currentRequestId = nextRequestIdRef.current++;
+
+      const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
+        if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
+          setAiThinking(false);
+          setIsStreamingMessage(true);
+          setStreamedMessage(prev => {
+            // if no existing message, create new one
+            if (!prev) {
+              return {
+                id: (Date.now() + 1).toString(),
+                text: ev.response,
+                sender: 'system',
+                timestamp: getTimestamp()
+              };
+            }
+
+            // otherwise, just update text
+            return {
+              ...prev,
+              text: prev.text + ev.response,
+            };
+          });
+        }
+      });
+
+      streamingListenersRef.current.push(partialSub);
+
+      // const errorSub = ExpoLlmMediapipe.addListener("onErrorResponse", (ev: ErrorResponseEventPayload) => {
+      //   if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
+      //     clearStreamingListeners(); // Clean up these specific listeners
+      //     nextRequestIdRef.current++;
+      //   }
+      // });
+      // streamingListenersRef.current.push(errorSub);
+
+      try {
+
+        await LingoProMultimodal.generateResponseAsync(
+          modelHandle,
+          currentRequestId,
+          promptAddition + textInput,
+          msgImageUri ?? imageUri ?? '',
+          useAgenticTools,
+        );
+        setIsStreamingMessage(false);
+      } catch (e) {
+        console.log("Error calling MediaPipe AI:", e);
+      }
+
+
+      // if (mode === 'voice') {
+      //   Speech.speak(aiResponseText, { language: 'en-US' });
+      // }
+
+    } catch (error: any) {
+      console.error("Error calling MediaPipe AI:", error);
+      setMessages(prevMessages => [...prevMessages, {
+        id: Date.now().toString(),
+        text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
+        sender: 'system',
+        timestamp: getTimestamp()
+      }]);
+    } finally {
+      setAiThinking(false);
+    }
+  }, [
+    isModelLoaded,
+    modelHandle,
+    streamedMessage,
+    clearStreamingListeners,
+    setMessages,
+    setAiThinking,
+    setStreamedMessage,
+    setIsStreamingMessage,
+    setImageUri,
+    imageUri,
+    useAgenticTools,
+    nextRequestIdRef,
+    streamingListenersRef
+  ]);
+
+  const stopRecording = useCallback(async () => {
     if (waveformIntervalRef.current) {
       clearInterval(waveformIntervalRef.current);
       waveformIntervalRef.current = null;
@@ -175,6 +317,7 @@ export default function ChatScreen() {
           timestamp: getTimestamp(),
           audioUri: uri,
         };
+
         setMessages(prevMessages => [...prevMessages, userMessage]);
         processMessageWithAI("Voice message", uri, null, 'voice');
 
@@ -189,68 +332,14 @@ export default function ChatScreen() {
     } finally {
       setRecording(undefined);
     }
-  }
+  }, [
+    recording,
+    processMessageWithAI,
+  ]);
 
   // --- AI Message Processing ---
-  const processMessageWithAI = async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
-    if (!isModelLoaded) {
-      Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
-      return;
-    }
 
-    setAiThinking(true);
-    // No need to update voice message text since it's already showing as "Voice message"
-    try {
-      if (!modelHandle) {
-        throw new Error("Image URI is missing for AI processing.");
-      }
-
-      // Since gemma-3n only has a maximum of 1 image per session
-      // we set the last uploaded image as the imageUri
-      if (msgImageUri) {
-        setImageUri(msgImageUri);
-      }
-
-      console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
-      // Pass the modelHandle to the native module
-      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
-      // const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
-      const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
-      const aiResponseText: string = await LingoProMultimodal.generateResponse(
-        modelHandle,
-        Math.floor(Math.random() * 1000000),
-        promptAddition + textInput,
-        msgImageUri ?? imageUri ?? '',
-        useAgenticTools,
-      );
-      console.log("MediaPipe AI response:", aiResponseText);
-
-      setMessages(prevMessages => [...prevMessages, {
-        id: (Date.now() + 1).toString(),
-        text: aiResponseText,
-        sender: 'system',
-        timestamp: getTimestamp(),
-      }]);
-
-      if (mode === 'voice') {
-        Speech.speak(aiResponseText, { language: 'en-US' });
-      }
-
-    } catch (error: any) {
-      console.error("Error calling MediaPipe AI:", error);
-      setMessages(prevMessages => [...prevMessages, {
-        id: Date.now().toString(),
-        text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
-        sender: 'system',
-        timestamp: getTimestamp()
-      }]);
-    } finally {
-      setAiThinking(false);
-    }
-  };
-
-  const handleSendText = () => {
+  const handleSendText = useCallback(() => {
     if (inputText.trim() || selectedImage) {
       const userMessage: ChatMessageType = {
         id: Date.now().toString(),
@@ -259,27 +348,30 @@ export default function ChatScreen() {
         timestamp: getTimestamp(),
         attachedImageUrl: selectedImage || undefined,
       };
+
       setMessages(prevMessages => [...prevMessages, userMessage]);
       setInputText('');
       setSelectedImage(null);
       processMessageWithAI(userMessage.text, null, selectedImage, 'text');
     }
-  };
+  }, [inputText, selectedImage, processMessageWithAI]);
+
 
   // Function to play AI message audio
-  const playAiMessageAudio = (textToSpeak: string) => {
+  const playAiMessageAudio = useCallback((textToSpeak: string) => {
     Speech.speak(textToSpeak, { language: 'en-US' });
-  };
+  }, []);
+
 
   // Function to play voice message audio
-  const playVoiceMessage = (audioUri: string) => {
+  const playVoiceMessage = useCallback((audioUri: string) => {
     setUri(audioUri);
     audioPlayer.play();
-  };
+  }, [audioPlayer]);
 
 
   // Function to handle image selection
-  const handleImageSelection = async () => {
+  const handleImageSelection = useCallback(async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -302,29 +394,41 @@ export default function ChatScreen() {
     } catch (error) {
       Alert.alert('Error', 'Failed to select image. Please try again.');
     }
-  };
+  }, []);
 
-  const toggleInputMode = () => {
+  const handleImageRemoval = useCallback(() => {
+    setSelectedImage(null);
+  }, []);
+
+
+  const toggleInputMode = useCallback(() => {
     if (recording && recording.isRecording) {
       stopRecording(); // Stop recording before switching mode
     }
     setCurrentMode(prevMode => (prevMode === 'text' ? 'voice' : 'text'));
-  };
+  }, [recording]);
+
+  const handleBack = useCallback(() => {
+    router.back();
+  }, [router]);
+
+  const handleToggleTools = useCallback(() => {
+    setUseAgenticTools(prev => !prev);
+  }, []);
+  const rightComponents = React.useMemo(() => [
+    <ToolsToggle
+      key="tools-toggle"
+      useAgenticTools={useAgenticTools}
+      onToggle={handleToggleTools}
+    />
+  ], [useAgenticTools, handleToggleTools]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ChatHeader
         title="AI Chat"
-        onBack={() => router.back()}
-        rightComponents={[
-          <ToolsToggle
-            key="tools-toggle"
-            useAgenticTools={useAgenticTools}
-            onToggle={() => setUseAgenticTools(!useAgenticTools)}
-          />
-        ]
-
-        }
+        onBack={handleBack}
+        rightComponents={rightComponents}
       />
 
       <ModelLoadingOverlay isVisible={isLoadingModel} />
@@ -336,6 +440,7 @@ export default function ChatScreen() {
       >
         <MessageList
           messages={messages}
+          streamedMessage={streamedMessage}
           aiThinking={aiThinking}
           onPlayVoiceMessage={playVoiceMessage}
           onPlayAiAudio={playAiMessageAudio}
@@ -349,10 +454,11 @@ export default function ChatScreen() {
           waveformHeights={waveformHeights}
           isModelReady={isModelLoaded}
           isLoadingModel={isLoadingModel}
+          isStreamingMessage={iSStreamingMessage || aiThinking}
           onTextChange={setInputText}
           onSendText={handleSendText}
           onImageSelect={handleImageSelection}
-          onRemoveImage={() => setSelectedImage(null)}
+          onRemoveImage={handleImageRemoval}
           onToggleMode={toggleInputMode}
           onStartRecording={startRecording}
           onStopRecording={stopRecording}

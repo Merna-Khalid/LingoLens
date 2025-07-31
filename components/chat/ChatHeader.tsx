@@ -9,7 +9,8 @@ interface ChatHeaderProps {
   rightComponents?: React.ReactNode[];
 }
 
-export default function ChatHeader({ title, onBack, onShare, rightComponents }: ChatHeaderProps) {
+export default React.memo(function ChatHeader({ title, onBack, onShare, rightComponents }: ChatHeaderProps) {
+  console.log("ChatHeader is getting rendered")
   return (
     <View style={styles.header}>
       <TouchableOpacity style={styles.backButton} onPress={onBack}>
@@ -18,18 +19,18 @@ export default function ChatHeader({ title, onBack, onShare, rightComponents }: 
       <Text style={styles.headerTitle}>{title}</Text>
       {/* <View style=styles.rightActions> */}
       <View >
-          {rightComponents && rightComponents.map((component, index) => (
-            <React.Fragment key={index}>{component}</React.Fragment>
-          ))}
-          {onShare && (
-            <TouchableOpacity style={styles.shareButton} onPress={onShare}>
-              <Text style={styles.shareButtonText}>📤</Text>
-            </TouchableOpacity>
-          )}
+        {rightComponents && rightComponents.map((component, index) => (
+          <React.Fragment key={index}>{component}</React.Fragment>
+        ))}
+        {onShare && (
+          <TouchableOpacity style={styles.shareButton} onPress={onShare}>
+            <Text style={styles.shareButtonText}>📤</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
-}
+})
 
 const styles = StyleSheet.create({
   header: {
