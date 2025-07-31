@@ -10,6 +10,8 @@ import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpaci
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LANGUAGE_KEY, LEVEL_KEY, PROGRESS_KEY } from './main-page'
 
 const ToolsToggle = ({ useAgenticTools, onToggle }: { useAgenticTools: boolean, onToggle: () => void }) => {
   return (
@@ -211,10 +213,14 @@ export default function ChatScreen() {
 
       console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
       // Pass the modelHandle to the native module
+      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
+      // const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
+      const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
       const aiResponseText: string = await LingoProMultimodal.generateResponse(
         modelHandle,
         Math.floor(Math.random() * 1000000),
-        textInput,
+        promptAddition + textInput,
         msgImageUri ?? imageUri ?? '',
         useAgenticTools,
       );

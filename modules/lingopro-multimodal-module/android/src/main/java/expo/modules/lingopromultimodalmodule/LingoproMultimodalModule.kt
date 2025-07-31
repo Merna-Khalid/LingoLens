@@ -24,6 +24,8 @@ import java.util.UUID
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
 private const val DOWNLOAD_DIRECTORY = "llm_models"
 
+private const val MAX_TOKENS = 32000
+
 private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 private var activeJobs: MutableList<Job> = mutableListOf()
 private var activeModelHandle: Int? = null
@@ -31,6 +33,7 @@ private var activeModelHandle: Int? = null
 class LingoproMultimodalModule : Module() {
     private var nextHandle = 1
     private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
+    private var modelHistoryContext = ""
 
     private val activeDownloads = mutableMapOf<String, Job>()
     private val dbHelper by lazy {
@@ -228,6 +231,19 @@ class LingoproMultimodalModule : Module() {
     private val requiredWordFields = listOf(
         "language", "word", "meaning", "writing", "wordType", "category1"
     )
+
+    // <AI></AI> This is the response that we should return to the chat "gui response", index 0
+    // <sum></sum> to append to context, index 1
+    private fun extractPromptTags(rawResponse: String): List<String> {
+        val aiPattern = "<AI>((.|\\n|\\t)*?)</AI>".toRegex()
+        val sumPattern = "<sum>((.|\\n|\\t)*?)</sum>".toRegex()
+
+        val aiContent = aiPattern.find(rawResponse)?.groupValues?.get(1) ?: ""
+        val sumContent = sumPattern.find(rawResponse)?.groupValues?.get(1) ?: ""
+
+        return listOf(aiContent, sumContent)
+    }
+
     // Tool definitions (model-friendly format)
     private val availableTools = listOf(
         createToolDefinition(
@@ -382,6 +398,10 @@ class LingoproMultimodalModule : Module() {
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    fun estimateTokens(text: String): Int {
+        return text.length / 4
     }
 
     private fun parseWordsFromResponse(response: String): List<Pair<String, String>> {
@@ -837,7 +857,13 @@ class LingoproMultimodalModule : Module() {
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean,  promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
-
+                    val fixedSystemPrompt = """
+                    System: 
+                        You are a language learning assistant with access to specific tools.
+                        Return the summary of history and the new user query in between tags <sum></sum>
+                        and return your direct answer to the user request in between <AI></AI>
+                        You are provided with the chat history between you and the user as the following
+                    """.trimIndent()
                     val model = modelMap[handle]
                     if (model == null) {
                         promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
@@ -850,38 +876,51 @@ class LingoproMultimodalModule : Module() {
                         "message" to "Generating response with prompt: ${prompt.take(30)}..."
                     ))
 
+                    var promptTokens = estimateTokens(prompt)
+                    var historyTokens = estimateTokens(modelHistoryContext)
+
+                    if (promptTokens + historyTokens > MAX_TOKENS) {
+                        throw Exception("Input exceeds 32K tokens! (Current: $promptTokens + $historyTokens). Please create a new session")
+                    }
+
                     // Agentic implementation
                     // Step 1: Use the synchronous version
                     if (!useTools) {
                         Log.d(TAG, "Processing without tools")
                         val systemMessage = "If the user asks to add anything to SRS flashcards, guide them to activate tools mode first."
-                        val modifiedPrompt = "When discussing SRS flashcards, please remind users they need to be in tools mode. Now, regarding your question: $prompt"
-
+                        val modifiedPrompt = """"
+                            $fixedSystemPrompt
+                            chat history context -> $modelHistoryContext
+                            
+                            User: 
+                            $prompt"""
+                        Log.d(TAG, "Prompt without tools : $modifiedPrompt")
                         val response = model.generateResponse(requestId, modifiedPrompt, imagePath)
                         Log.d(TAG, "Resposne ${response}")
-                        withContext(Dispatchers.Main) { promise.resolve(response) }
+                        val (aiContent, sumContent) =  extractPromptTags(response)
+                        modelHistoryContext = sumContent
+                        withContext(Dispatchers.Main) { promise.resolve(aiContent) }
                     }
                     else {
 
                         Log.d(TAG, "Processing with tools enabled")
                         val toolsPrompt = """
-                            You are a language learning assistant with access to specific tools. 
-                            Carefully analyze the user's request and determine if tool usage is required.
+                            $fixedSystemPrompt
+                            chat history context -> $modelHistoryContext
+                            
+                            # Available Tools -> ${summarizeTools(availableTools).trimIndent()}
                         
-                            # Available Tools:
-                            ${summarizeTools(availableTools).trimIndent()}
-                        
-                            # Response Format:
-                            - If tools are needed, respond ONLY with valid JSON format:
-                              ```json
+                            # Response Format ->
+                            - Do NOT enclose the JSON array in markdown code blocks ( ``` json ... ``` ).
                               {"tools": ["tool_name", ...]}
-                              ```
-                            - If no tools are needed, respond naturally to the user's query without any JSON.
-                        
-                            # Current Query:
-                            $prompt
+                            - If no tools are needed, respond naturally to the user's query with the previous instructions, with only tags <sum></sum> and <AI></AI>
+                            
+                            User:
+                            # Current Query -> $prompt
                         """.trimIndent()
+                        Log.d(TAG, "Tools prompt : $toolsPrompt")
                         val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+                        Log.d(TAG, "Model raw response: ${rawResponse}")
 
                         // Step 2: Parse tool calls (simplified example)
                         val toolCalls = parseToolCalls(rawResponse)
@@ -890,8 +929,10 @@ class LingoproMultimodalModule : Module() {
                         if (toolCalls.isEmpty()) {
                             // No tools needed; return raw response
                             Log.d(TAG, "No tools needed, returning raw response")
+                            val (aiContent, sumContent) =  extractPromptTags(rawResponse)
+                            modelHistoryContext = sumContent
                             withContext(Dispatchers.Main) {
-                                promise.resolve(rawResponse)
+                                promise.resolve(aiContent)
                             }
                         } else {
                             // Step 3: Execute tools sequentially
@@ -902,12 +943,22 @@ class LingoproMultimodalModule : Module() {
                             }
 
                             // Step 4: Send results back to the model for final response
+                            val toolsResultPrompt = """
+                                $fixedSystemPrompt
+                                chat history context -> $modelHistoryContext
+                                Tool results -> ${toolResults.joinToString()}
+                                User:
+                                # Current Query -> $prompt
+                            """.trimIndent()
+                            Log.d(TAG, "Tols prompt : $toolsResultPrompt")
                             val finalResponse = model.generateResponse(
                                 requestId,
-                                "Tool results: ${toolResults.joinToString()}",
+                                toolsResultPrompt,
                                 imagePath
                             )
-                            withContext(Dispatchers.Main) { promise.resolve(finalResponse) }
+                            val (aiContent, sumContent) =  extractPromptTags(finalResponse)
+                            modelHistoryContext = sumContent
+                            withContext(Dispatchers.Main) { promise.resolve(aiContent) }
                         }
                     }
                 } catch (e: Exception) {

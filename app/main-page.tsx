@@ -21,9 +21,9 @@ interface AllLanguageProgress {
 }
 
 
-const LANGUAGE_KEY = 'lingopro_selected_language';
-const LEVEL_KEY = 'lingopro_selected_level';
-const PROGRESS_KEY = 'lingopro_language_progress';
+export const LANGUAGE_KEY = 'lingopro_selected_language';
+export const LEVEL_KEY = 'lingopro_selected_level';
+export const PROGRESS_KEY = 'lingopro_language_progress';
 
 export default function MainPageScreen() {
 
