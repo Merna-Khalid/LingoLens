@@ -987,6 +987,13 @@ class LingoproMultimodalModule : Module() {
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
+                    val fixedSystemPrompt = """
+                    System: 
+                        You are a language learning assistant with access to specific tools.
+                        Return the summary of history and the new user query in between tags <sum></sum>
+                        and return your direct answer to the user request in between <AI></AI>
+                        You are provided with the chat history between you and the user as the following
+                    """.trimIndent()
                     val model = modelMap[handle]
                     if (model == null) {
                         withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
@@ -999,9 +1006,24 @@ class LingoproMultimodalModule : Module() {
                         "message" to "Starting async generation with prompt: ${prompt.take(30)}..."
                     ))
 
-                    // Use the async version with callback and event emission
-                    try {
-                        model.generateResponseAsync(requestId, prompt, imagePath) { result ->
+                    var promptTokens = estimateTokens(prompt)
+                    var historyTokens = estimateTokens(modelHistoryContext)
+
+                    if (promptTokens + historyTokens > MAX_TOKENS) {
+                        throw Exception("Input exceeds 32K tokens! (Current: $promptTokens + $historyTokens). Please create a new session")
+                    }
+                    if(!useTools) {
+                        Log.d(TAG, "Processing without tools")
+                        val systemMessage = "If the user asks to add anything to SRS flashcards, guide them to activate tools mode first."
+                        val modifiedPrompt = """"
+                            $fixedSystemPrompt
+                            chat history context -> $modelHistoryContext
+                            
+                            User: 
+                            $prompt"""
+                        Log.d(TAG, "Prompt without tools : $modifiedPrompt")
+
+                        model.generateResponseAsync(requestId, modifiedPrompt , imagePath) { result ->
                             try {
                                 if (result.isEmpty()) {
                                     sendEvent("logging", mapOf(
@@ -1031,13 +1053,81 @@ class LingoproMultimodalModule : Module() {
                                 promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
                             }
                         }
-                    } catch (e: Exception) {
-                        sendEvent("logging", mapOf(
-                            "handle" to handle,
-                            "requestId" to requestId,
-                            "message" to "Exception during generateResponseAsync call: ${e.message}"
-                        ))
-                        promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                    } else {
+                        Log.d(TAG, "Processing with tools enabled")
+                        val toolsPrompt = """
+                            $fixedSystemPrompt
+                            chat history context -> $modelHistoryContext
+                            
+                            # Available Tools -> ${summarizeTools(availableTools).trimIndent()}
+                        
+                            # Response Format ->
+                            - Do NOT enclose the JSON array in markdown code blocks ( ``` json ... ``` ).
+                              {"tools": ["tool_name", ...]}
+                            - If no tools are needed, respond naturally to the user's query with the previous instructions, with only tags <sum></sum> and <AI></AI>
+                            
+                            User:
+                            # Current Query -> $prompt
+                        """.trimIndent()
+                        Log.d(TAG, "Tools prompt : $toolsPrompt")
+                        val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+                        Log.d(TAG, "Model raw response: ${rawResponse}")
+
+                        // Step 2: Parse tool calls (simplified example)
+                        val toolCalls = parseToolCalls(rawResponse)
+                        Log.d(TAG, "Parsed tool calls: ${toolCalls.size}")
+
+                        if(toolCalls.isEmpty()) {
+                            sendEvent("onPartialResponse", mapOf(
+                                "handle" to handle,
+                                "requestId" to requestId,
+                                "response" to rawResponse
+                            ))
+                            promise.resolve(true)  // Just send success signal
+                        } else {
+                            // Step 3: Execute tools sequentially
+                            val toolResults = mutableListOf<JSONObject>()
+                            for (call in toolCalls.take(3)) {
+                                val result = executeTool(call)
+                                toolResults.add(result)
+                            }
+
+                            // Step 4: Send results back to the model for final response
+                            val toolsResultPrompt = """
+                                $fixedSystemPrompt
+                                chat history context -> $modelHistoryContext
+                                Tool results -> ${toolResults.joinToString()}
+                                User:
+                                # Current Query -> $prompt
+                            """.trimIndent()
+                            Log.d(TAG, "Tols prompt : $toolsResultPrompt")
+
+                            model.generateResponseAsync(requestId, toolsResultPrompt , imagePath) { result ->
+                                try {
+                                    if (result.isEmpty()) {
+                                        sendEvent("logging", mapOf(
+                                            "handle" to handle,
+                                            "requestId" to requestId,
+                                            "message" to "Generation completed but returned empty result"
+                                        ))
+                                        promise.reject("GENERATION_FAILED", "Failed to generate response", null)
+                                    } else {
+                                        // We don't resolve with the final result here anymore
+                                        // The client will assemble the full response from streaming events
+                                        promise.resolve(true)  // Just send success signal
+                                    }
+                                } catch (e: Exception) {
+                                    sendEvent("logging", mapOf(
+                                        "handle" to handle,
+                                        "requestId" to requestId,
+                                        "message" to "Error in async result callback: ${e.message}"
+                                    ))
+                                    // Only reject if not already settled
+                                    promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
+                                }
+                            }
+                        }
+
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "generateResponseAsync initial call error: ${e.message}", e)
