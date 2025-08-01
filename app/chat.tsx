@@ -7,7 +7,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { default as ExpoLlmMediapipe, default as LingoProMultimodal, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, BackHandler  } from 'react-native';
+import { Alert, BackHandler, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
@@ -85,54 +85,6 @@ export default function ChatScreen() {
   };
 
 
-  // Handle initial image prompt and message display
-    useEffect(() => {
-      if (paramImageUri && isModelLoaded && !initialPromptSentRef.current) {
-        initialPromptSentRef.current = true;
-        console.log('Received image URI:', paramImageUri);
-        setImageUri(paramImageUri as string);
-
-        setMessages(prevMessages => [...prevMessages, {
-            id: Date.now().toString(),
-            text: "Here is an image for us to discuss.",
-            sender: 'user',
-            timestamp: getTimestamp(),
-            attachedImageUrl: paramImageUri,
-        }]);
-
-        const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description";
-        processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
-      } else if (!paramImageUri) {
-        console.warn("No photo URI provided for Chat. Redirecting to main page.");
-        router.replace('/main-page');
-      }
-    }, [paramImageUri, isModelLoaded, processMessageWithAI, router]);
-
-
-    // Unload the model when leaving chat
-    useEffect(() => {
-          const backAction = () => {
-            releaseLoadedModel(); // Release model before exiting
-            return false; // false lets the app continue exiting
-          };
-
-          const backHandler = BackHandler.addEventListener(
-            'hardwareBackPress',
-            backAction
-          );
-
-          return () => backHandler.remove(); // Cleanup
-    }, [releaseLoadedModel, router]);
-
-    // Request audio permissions
-    useEffect(() => {
-      (async () => {
-        const status = await AudioModule.requestRecordingPermissionsAsync();
-        if (!status.granted) {
-          Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
-        }
-      })();
-    }, []);
 
 
 
@@ -452,6 +404,56 @@ export default function ChatScreen() {
       onToggle={handleToggleTools}
     />
   ], [useAgenticTools, handleToggleTools]);
+
+  // Handle initial image prompt and message display
+  useEffect(() => {
+    if (paramImageUri && isModelLoaded && !initialPromptSentRef.current) {
+      initialPromptSentRef.current = true;
+      console.log('Received image URI:', paramImageUri);
+      setImageUri(paramImageUri as string);
+
+      setMessages(prevMessages => [...prevMessages, {
+        id: Date.now().toString(),
+        text: "Here is an image for us to discuss.",
+        sender: 'user',
+        timestamp: getTimestamp(),
+        attachedImageUrl: paramImageUri,
+      }]);
+
+      // const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description (ONLY reply with maximum 50 characters ONLY I MEAN IT.)";
+      const initialPrompt = "reply with 100 characters only";
+      processMessageWithAI(initialPrompt, null, "", 'text');
+    } else if (!paramImageUri) {
+      console.warn("No photo URI provided for Chat. Redirecting to main page.");
+      router.replace('/main-page');
+    }
+  }, [paramImageUri, isModelLoaded, processMessageWithAI]);
+
+
+  // Unload the model when leaving chat
+  useEffect(() => {
+    const backAction = () => {
+      releaseLoadedModel(); // Release model before exiting
+      return false; // false lets the app continue exiting
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction
+    );
+
+    return () => backHandler.remove(); // Cleanup
+  }, [releaseLoadedModel, router]);
+
+  // Request audio permissions
+  useEffect(() => {
+    (async () => {
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
+        Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
+      }
+    })();
+  }, []);
 
   return (
     <SafeAreaView style={styles.safeArea}>
