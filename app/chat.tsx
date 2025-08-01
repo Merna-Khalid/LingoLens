@@ -128,16 +128,6 @@ export default function ChatScreen() {
     try {
       if (!modelHandle) throw new Error("modelHandle is null.");
 
-      // Initialize streaming message
-      const initialMessage: ChatMessageType = {
-        id: Date.now().toString(),
-        text: '',
-        sender: 'system',
-        timestamp: getTimestamp()
-      };
-      setStreamedMessage(initialMessage);
-      setIsStreamingMessage(true);
-
       clearStreamingListeners();
       if (msgImageUri) setImageUri(msgImageUri);
 
@@ -156,6 +146,7 @@ export default function ChatScreen() {
       const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
         if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
           setAiThinking(false);
+          setIsStreamingMessage(true);
 
           let cleanText = '';
 
@@ -209,20 +200,28 @@ export default function ChatScreen() {
           }
 
           // Update UI with new content
-           setStreamedMessage(prev => {
-                const updated = {
-                  ...prev!,
-                  text: (prev?.text || '') + cleanText
-           };
+          setStreamedMessage(prev => {
+            if (!prev) {
+              return {
+                id: Date.now().toString(),
+                text: cleanText,
+                sender: 'system',
+                timestamp: getTimestamp()
+              };
+            }
+            const updated = {
+              ...prev,
+              text: prev.text + cleanText
+            };
 
-                // Also update in messages array
-//             setMessages(prevMsgs =>
-//               prevMsgs.map(msg =>
-//                 msg.id === updated.id ? updated : msg
-//               )
-//             );
+            // Also update in messages array
+            //             setMessages(prevMsgs =>
+            //               prevMsgs.map(msg =>
+            //                 msg.id === updated.id ? updated : msg
+            //               )
+            //             );
 
-                return updated;
+            return updated;
           });
         }
       });
@@ -246,26 +245,29 @@ export default function ChatScreen() {
         timestamp: getTimestamp()
       }]);
     } finally {
-      // setMessages(prev => [...prev, streamedMessage!]);
-      setStreamedMessage(null);
+      setStreamedMessage(currentStreamedMessage => {
+        if (currentStreamedMessage && currentStreamedMessage.text) {
+          setMessages(prev => [...prev, currentStreamedMessage]);
+        }
+        return null;
+      });
       setIsStreamingMessage(false);
       setAiThinking(false);
     }
   }, [
-      isModelLoaded,
-      modelHandle,
-      streamedMessage,
-      clearStreamingListeners,
-      setMessages,
-      setAiThinking,
-      setStreamedMessage,
-      setIsStreamingMessage,
-      setImageUri,
-      imageUri,
-      useAgenticTools,
-      nextRequestIdRef,
-      streamingListenersRef
-    ]);
+    isModelLoaded,
+    modelHandle,
+    clearStreamingListeners,
+    setMessages,
+    setAiThinking,
+    setStreamedMessage,
+    setIsStreamingMessage,
+    setImageUri,
+    imageUri,
+    useAgenticTools,
+    nextRequestIdRef,
+    streamingListenersRef
+  ]);
 
   const stopRecording = useCallback(async () => {
     if (waveformIntervalRef.current) {
@@ -420,9 +422,8 @@ export default function ChatScreen() {
         attachedImageUrl: paramImageUri,
       }]);
 
-      // const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description (ONLY reply with maximum 50 characters ONLY I MEAN IT.)";
-      const initialPrompt = "reply with 100 characters only";
-      processMessageWithAI(initialPrompt, null, "", 'text');
+      const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description";
+      processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
     } else if (!paramImageUri) {
       console.warn("No photo URI provided for Chat. Redirecting to main page.");
       router.replace('/main-page');
