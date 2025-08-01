@@ -6,6 +6,7 @@ import { ChatMessage as ChatMessageType } from './types';
 interface MessageListProps {
   messages: ChatMessageType[];
   streamedMessage: ChatMessageType | null;
+  isStreamingMessage?: boolean;
   aiThinking: boolean;
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
@@ -14,6 +15,7 @@ interface MessageListProps {
 export default React.memo(function MessageList({
   messages,
   streamedMessage,
+  isStreamingMessage,
   aiThinking,
   onPlayVoiceMessage,
   onPlayAiAudio
@@ -21,40 +23,51 @@ export default React.memo(function MessageList({
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [messages]);
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, [messages, streamedMessage]);
 
-  return (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.chatContainer}
-      contentContainerStyle={styles.chatContentContainer}
-    >
-      {messages.map((message) => (
-        <ChatMessage
-          key={message.id}
-          message={message}
-          onPlayVoiceMessage={onPlayVoiceMessage}
-          onPlayAiAudio={onPlayAiAudio}
-        />
-      ))}
+    // Determine if we should show the streamed message
+    const shouldShowStreamedMessage = streamedMessage &&
+                                   isStreamingMessage &&
+                                   !messages.some(msg => msg.id === streamedMessage.id);
 
-      {streamedMessage && (
-        <ChatMessage
-          key={streamedMessage.id}
-          message={streamedMessage}
-          onPlayVoiceMessage={onPlayVoiceMessage}
-          onPlayAiAudio={onPlayAiAudio}
-        />)}
-      {aiThinking && (
-        <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
-          <ActivityIndicator size="small" color="#333" />
-          <Text style={styles.timestamp}>AI is thinking...</Text>
-        </View>
-      )}
-    </ScrollView>
-  );
-})
+    return (
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.chatContainer}
+        contentContainerStyle={styles.chatContentContainer}
+      >
+        {messages.map((message) => (
+          <ChatMessage
+            key={message.id}
+            message={message}
+            isStreaming={isStreamingMessage && message.id === streamedMessage?.id} // Completed messages are never streaming
+            isThinking={aiThinking}
+            onPlayVoiceMessage={onPlayVoiceMessage}
+            onPlayAiAudio={onPlayAiAudio}
+          />
+        ))}
+
+        {shouldShowStreamedMessage && (
+          <ChatMessage
+            key={streamedMessage.id}
+            message={streamedMessage}
+            isStreaming={true}
+            isThinking={aiThinking}
+            onPlayVoiceMessage={onPlayVoiceMessage}
+            onPlayAiAudio={onPlayAiAudio}
+          />
+        )}
+
+        {aiThinking && (
+          <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
+            <ActivityIndicator size="small" color="#333" />
+            <Text style={styles.timestamp}>AI is thinking...</Text>
+          </View>
+        )}
+      </ScrollView>
+    );
+  });
 
 const styles = StyleSheet.create({
   chatContainer: {

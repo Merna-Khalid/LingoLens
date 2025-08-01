@@ -6,11 +6,13 @@ import { ChatMessage as ChatMessageType } from './types';
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  isStreaming?: boolean;
+  isThinking?: boolean;
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
 }
 
-export default function ChatMessage({ message, onPlayVoiceMessage, onPlayAiAudio }: ChatMessageProps) {
+export default function ChatMessage({ message, isStreaming = false, isThinking = false, onPlayVoiceMessage, onPlayAiAudio }: ChatMessageProps) {
   return (
     <View
       style={[
@@ -34,39 +36,44 @@ export default function ChatMessage({ message, onPlayVoiceMessage, onPlayAiAudio
           onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} 
         />
       )}
-      {message.audioUri ? (
-        <View style={styles.voiceMessageContainer}>
-          <TouchableOpacity
-            style={styles.voicePlayButton}
-            onPress={() => onPlayVoiceMessage(message.audioUri!)}
-          >
-            <Icon name="play" size={20} color="#007AFF" />
-          </TouchableOpacity>
-          <Text style={styles.voiceMessageText}>Voice message</Text>
-        </View>
-      ) : (
-        <Text style={styles.messageText}>
-          {message.sender === 'user' ? (
-            message.text
-          ) : (
-            <Markdown>
-              {message.text}
-            </Markdown>
-          )}
-        </Text>
-      )}
-      <View style={styles.messageFooter}>
-        {message.sender === 'system' && (
-          <TouchableOpacity
-            style={styles.playButton}
-            onPress={() => onPlayAiAudio(message.text)}
-          >
-            <Text style={styles.playButtonIcon}>🔊</Text>
-          </TouchableOpacity>
-        )}
-        <Text style={styles.timestamp}>{message.timestamp}</Text>
+      {/* Audio message handling */}
+    {message.audioUri ? (
+      <View style={styles.voiceMessageContainer}>
+        <TouchableOpacity
+          style={styles.voicePlayButton}
+          onPress={() => onPlayVoiceMessage(message.audioUri!)}
+        >
+          <Icon name="play" size={20} color="#007AFF" />
+        </TouchableOpacity>
+        <Text style={styles.voiceMessageText}>Voice message</Text>
       </View>
+    ) : (
+      /* Text message with Markdown support */
+      <Text style={styles.messageText}>
+        {message.sender === 'user' ? (
+          message.text
+        ) : (
+          <Markdown>
+            {message.text}
+          </Markdown>
+        )}
+      </Text>
+    )}
+
+    {/* Message footer with conditional TTS button */}
+    <View style={styles.messageFooter}>
+      {/* Only show TTS button for completed AI messages */}
+      {message.sender === 'system' && !isStreaming && !isThinking && (
+        <TouchableOpacity
+          style={styles.playButton}
+          onPress={() => onPlayAiAudio(message.text)}
+        >
+          <Icon name="volume-high" size={20} color="#666" />
+        </TouchableOpacity>
+      )}
+      <Text style={styles.timestamp}>{message.timestamp}</Text>
     </View>
+  </View>
   );
 }
 

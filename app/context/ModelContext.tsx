@@ -63,8 +63,8 @@ export const ModelProvider: React.FC<ModelProviderProps> = ({ children }) => {
 
         const handle = await LingoProMultimodal.createModel(
           cleanedModelPath,
-          2048, // maxTokens
-          3,    // topK
+          4096, // maxTokens
+          1,    // topK
           0.7,  // temperature
           123,  // random seed
           true  // multimodal

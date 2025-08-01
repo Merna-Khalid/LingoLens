@@ -167,119 +167,139 @@ export default function ChatScreen() {
 
 
   const processMessageWithAI = useCallback(async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
-      if (!isModelLoaded) {
-        Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
-        return;
-      }
+    if (!isModelLoaded) {
+      Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
+      return;
+    }
 
-      setAiThinking(true);
-      try {
-        if (!modelHandle) {
-          throw new Error("modelHandle is null.");
-        }
+    setAiThinking(true);
+    try {
+      if (!modelHandle) throw new Error("modelHandle is null.");
 
-        if (streamedMessage) {
-          setMessages(prevMessages => {
-            if (prevMessages.length === 0) {
-              return [streamedMessage];
+      // Initialize streaming message
+      const initialMessage: ChatMessageType = {
+        id: Date.now().toString(),
+        text: '',
+        sender: 'system',
+        timestamp: getTimestamp()
+      };
+      setStreamedMessage(initialMessage);
+      setIsStreamingMessage(true);
+
+      clearStreamingListeners();
+      if (msgImageUri) setImageUri(msgImageUri);
+
+      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
+      const promptAddition = `The language to learn: ${storedLanguage}, The level: ${storedLevel} `;
+
+      const currentRequestId = nextRequestIdRef.current++;
+
+      // State machine variables
+      let buffer = '';
+      let state: 'SEEKING_AI' | 'IN_AI' | 'SEEKING_CLOSE' = 'SEEKING_AI';
+      let aiTagCharsMatched = 0;
+      let closeTagCharsMatched = 0;
+
+      const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
+        if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
+          setAiThinking(false);
+
+          let cleanText = '';
+
+          for (const char of ev.response) {
+            buffer += char;
+
+            // State machine logic
+            switch (state) {
+              case 'SEEKING_AI':
+                if (char === '<') {
+                  aiTagCharsMatched = 1;
+                } else if (aiTagCharsMatched === 1 && char === 'A') {
+                  aiTagCharsMatched = 2;
+                } else if (aiTagCharsMatched === 2 && char === 'I') {
+                  aiTagCharsMatched = 3;
+                } else if (aiTagCharsMatched === 3 && char === '>') {
+                  state = 'IN_AI';
+                  buffer = '';
+                } else {
+                  aiTagCharsMatched = 0;
+                }
+                break;
+
+              case 'IN_AI':
+                if (char === '<') {
+                  closeTagCharsMatched = 1;
+                  state = 'SEEKING_CLOSE';
+                } else {
+                  cleanText += char;
+                }
+                break;
+
+              case 'SEEKING_CLOSE':
+                if (closeTagCharsMatched === 1 && char === '/') {
+                  closeTagCharsMatched = 2;
+                } else if (closeTagCharsMatched === 2 && char === 'A') {
+                  closeTagCharsMatched = 3;
+                } else if (closeTagCharsMatched === 3 && char === 'I') {
+                  closeTagCharsMatched = 4;
+                } else if (closeTagCharsMatched === 4 && char === '>') {
+                  state = 'SEEKING_AI';
+                  buffer = '';
+                } else {
+                  // Wasn't a closing tag - return to IN_AI state
+                  cleanText += buffer;
+                  buffer = '';
+                  state = 'IN_AI';
+                }
+                break;
             }
-            return [
-              ...prevMessages.slice(0, -1),
-              streamedMessage,
-              prevMessages[prevMessages.length - 1]
-            ];
-          });
-          setStreamedMessage(null);
-          setIsStreamingMessage(false);
-        }
-        clearStreamingListeners();
-
-        if (msgImageUri) {
-          setImageUri(msgImageUri);
-        }
-
-        const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-        const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
-        const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
-
-        const currentRequestId = nextRequestIdRef.current++;
-
-        let isInAITag = false;
-        let filteredResponse = '';
-
-        const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
-          if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
-            setAiThinking(false);
-            setIsStreamingMessage(true);
-
-            // Process the response to filter based on <AI> tags
-            const response = ev.response;
-            let newText = '';
-
-            for (let i = 0; i < response.length; i++) {
-              if (response.substr(i, 4) === '<AI>') {
-                isInAITag = true;
-                i += 3; // skip the tag
-                continue;
-              }
-
-              if (response.substr(i, 5) === '</AI>') {
-                isInAITag = false;
-                i += 4; // skip the tag
-                continue;
-              }
-
-              if (isInAITag) {
-                newText += response[i];
-              }
-            }
-
-            filteredResponse += newText;
-
-            setStreamedMessage(prev => {
-              if (!prev) {
-                return {
-                  id: (Date.now() + 1).toString(),
-                  text: filteredResponse,
-                  sender: 'system',
-                  timestamp: getTimestamp()
-                };
-              }
-              return {
-                ...prev,
-                text: filteredResponse,
-              };
-            });
           }
-        });
 
-        streamingListenersRef.current.push(partialSub);
+          // Update UI with new content
+           setStreamedMessage(prev => {
+                const updated = {
+                  ...prev!,
+                  text: (prev?.text || '') + cleanText
+           };
 
-        try {
-          await LingoProMultimodal.generateResponseAsync(
-            modelHandle,
-            currentRequestId,
-            promptAddition + textInput,
-            msgImageUri ?? imageUri ?? '',
-            useAgenticTools,
-          );
-          setIsStreamingMessage(false);
-        } catch (e) {
-          console.log("Error calling MediaPipe AI:", e);
+                // Also update in messages array
+//             setMessages(prevMsgs =>
+//               prevMsgs.map(msg =>
+//                 msg.id === updated.id ? updated : msg
+//               )
+//             );
+
+                return updated;
+          });
         }
+      });
 
-      } catch (error: any) {
-        console.error("Error calling MediaPipe AI:", error);
-        setMessages(prevMessages => [...prevMessages, {
-          id: Date.now().toString(),
-          text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
-          sender: 'system',
-          timestamp: getTimestamp()
-        }]);
-      } finally {
-        setAiThinking(false);
-      }
-    }, [
+      streamingListenersRef.current.push(partialSub);
+
+      await LingoProMultimodal.generateResponseAsync(
+        modelHandle,
+        currentRequestId,
+        promptAddition + textInput,
+        msgImageUri ?? imageUri ?? '',
+        useAgenticTools,
+      );
+
+    } catch (error: any) {
+      console.error("Error calling MediaPipe AI:", error);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        text: `Error: ${error.message || 'Please try again.'}`,
+        sender: 'system',
+        timestamp: getTimestamp()
+      }]);
+    } finally {
+      // setMessages(prev => [...prev, streamedMessage!]);
+      setStreamedMessage(null);
+      setIsStreamingMessage(false);
+      setAiThinking(false);
+    }
+  }, [
       isModelLoaded,
       modelHandle,
       streamedMessage,
@@ -451,6 +471,7 @@ export default function ChatScreen() {
         <MessageList
           messages={messages}
           streamedMessage={streamedMessage}
+          isStreamingMessage={iSStreamingMessage}
           aiThinking={aiThinking}
           onPlayVoiceMessage={playVoiceMessage}
           onPlayAiAudio={playAiMessageAudio}

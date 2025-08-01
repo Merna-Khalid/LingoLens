@@ -215,16 +215,40 @@ class LlmInferenceModel(
 
                 // Process image if needed
                 if (multiModal && imagePath.isNotEmpty()) {
-                    try {
-                        val imageUri = Uri.parse(imagePath)
-                        val resizedBitmap = decodeAndResizeImage(imageUri, MAX_IMAGE_SIZE)
-                        Log.d("LlmInferenceModel", "ResizedBitmap : $resizedBitmap")
-                        if (resizedBitmap != null) {
-                            val mpImage: MPImage = BitmapImageBuilder(resizedBitmap).build()
-                            llmInferenceSession.addImage(mpImage)
+//                    try {
+//                        val imageUri = Uri.parse(imagePath)
+//                        val resizedBitmap = decodeAndResizeImage(imageUri, MAX_IMAGE_SIZE)
+//                        Log.d("LlmInferenceModel", "ResizedBitmap : $resizedBitmap")
+//                        if (resizedBitmap != null) {
+//                            val mpImage: MPImage = BitmapImageBuilder(resizedBitmap).build()
+//                            llmInferenceSession.addImage(mpImage)
+//                        }
+//                    } catch (e: Exception) {
+//                        Log.w("LlmInferenceModel", "Image processing error: ${e.message}")
+//                    }
+                    val imageUri = Uri.parse(imagePath)
+                    val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
+                    if (inputStream != null) {
+                        // Use a nullable Bitmap and safe calls
+                        val bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream)
+
+                        // Close the input stream in a finally block or after use
+                        // It's crucial to close streams even if an error occurs during bitmap decoding
+                        try {
+                            if (bitmap != null) {
+                                val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
+                                llmInferenceSession.addImage(mpImage)
+                            } else {
+                                Log.d("LlmInferenceModel", "Warning: Could not decode bitmap from stream for image URI: ${imageUri}")
+                            }
+                        } finally {
+                            // Ensure the input stream is closed
+                            try {
+                                inputStream.close()
+                            } catch (e: IOException) {
+                                Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                            }
                         }
-                    } catch (e: Exception) {
-                        Log.w("LlmInferenceModel", "Image processing error: ${e.message}")
                     }
                 }
 
@@ -296,15 +320,39 @@ class LlmInferenceModel(
                 llmInferenceSession.addQueryChunk(prompt)
 
                 if (multiModal && imagePath.isNotEmpty()) {
-                    try {
-                        val imageUri = Uri.parse(imagePath)
-                        val resizedBitmap = decodeAndResizeImage(imageUri, MAX_IMAGE_SIZE)
-                        if (resizedBitmap != null) {
-                            val mpImage: MPImage = BitmapImageBuilder(resizedBitmap).build()
-                            llmInferenceSession.addImage(mpImage)
+//                    try {
+//                        val imageUri = Uri.parse(imagePath)
+//                        val resizedBitmap = decodeAndResizeImage(imageUri, MAX_IMAGE_SIZE)
+//                        if (resizedBitmap != null) {
+//                            val mpImage: MPImage = BitmapImageBuilder(resizedBitmap).build()
+//                            llmInferenceSession.addImage(mpImage)
+//                        }
+//                    } catch (e: Exception) {
+//                        Log.w("LlmInferenceModel", "Image processing error: ${e.message}")
+//                    }
+                    val imageUri = Uri.parse(imagePath)
+                    val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
+                    if (inputStream != null) {
+                        // Use a nullable Bitmap and safe calls
+                        val bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream)
+
+                        // Close the input stream in a finally block or after use
+                        // It's crucial to close streams even if an error occurs during bitmap decoding
+                        try {
+                            if (bitmap != null) {
+                                val mpImage: MPImage = BitmapImageBuilder(bitmap).build()
+                                llmInferenceSession.addImage(mpImage)
+                            } else {
+                                Log.d("LlmInferenceModel", "Warning: Could not decode bitmap from stream for image URI: ${imageUri}")
+                            }
+                        } finally {
+                            // Ensure the input stream is closed
+                            try {
+                                inputStream.close()
+                            } catch (e: IOException) {
+                                Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                            }
                         }
-                    } catch (e: Exception) {
-                        Log.w("LlmInferenceModel", "Image processing error: ${e.message}")
                     }
                 }
                 Log.d("LlmInferenceModel", "Generating response...")
