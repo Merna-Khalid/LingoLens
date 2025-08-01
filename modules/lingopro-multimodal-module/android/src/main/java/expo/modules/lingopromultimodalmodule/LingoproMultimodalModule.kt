@@ -1150,6 +1150,24 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Prompt without tools and $imagePathSelected : $modifiedPrompt")
 
                         model.generateResponseAsync(requestId, modifiedPrompt , imagePathSelected) { resultChunk ->
+                            if (resultChunk.isEmpty()) {
+                                sendEvent("logging", mapOf(
+                                "handle" to handle,
+                                "requestId" to requestId,
+                                "message" to "Generation completed but returned empty result"
+                                ))
+                                promise.reject("GENERATION_FAILED", "Failed to generate response", null)
+                            } else {
+                                sendEvent("logging", mapOf(
+                                "handle" to handle,
+                                "requestId" to requestId,
+                                "message" to "Generation completed successfully with ${resultChunk.length} characters"
+                                ))
+
+                                // We don't resolve with the final result here anymore
+                                // The client will assemble the full response from streaming events
+                                promise.resolve(true)  // Just send success signal
+                            }
                         }
                     } else {
                         Log.d(TAG, "Processing with tools enabled")
