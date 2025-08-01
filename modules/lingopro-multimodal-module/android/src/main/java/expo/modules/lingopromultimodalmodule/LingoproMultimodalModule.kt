@@ -1150,11 +1150,6 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Prompt without tools and $imagePathSelected : $modifiedPrompt")
 
                         model.generateResponseAsync(requestId, modifiedPrompt , imagePathSelected) { resultChunk ->
-                            sendEvent("onPartialResponse", mapOf(
-                                "handle" to handle,
-                                "requestId" to requestId,
-                                "response" to resultChunk
-                            ))
                         }
                     } else {
                         Log.d(TAG, "Processing with tools enabled")
