@@ -1149,7 +1149,11 @@ class LingoproMultimodalModule : Module() {
                             $prompt"""
                         Log.d(TAG, "Prompt without tools and $imagePathSelected : $modifiedPrompt")
 
+
                         model.generateResponseAsync(requestId, modifiedPrompt , imagePathSelected) { resultChunk ->
+                            // We don't resolve with the final result here anymore
+                            // The client will assemble the full response from streaming events
+                            promise.resolve(true)  // Just send success signal
                         }
                     } else {
                         Log.d(TAG, "Processing with tools enabled")
