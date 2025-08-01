@@ -1,3 +1,4 @@
+import * as ImageManipulator from 'expo-image-manipulator';
 import { CameraType, CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
 import { router } from 'expo-router';
@@ -6,6 +7,10 @@ import { ActivityIndicator, Dimensions, Platform, StyleSheet, Text, TouchableOpa
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
+
+const MAX_WIDTH = 640;
+const MAX_HEIGHT = 224;
+
 
 export default function CameraPageScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
@@ -51,32 +56,36 @@ export default function CameraPageScreen() {
           exif: false,
         });
 
-        console.log("Captured temporary photo URI:", photo.uri);
+        // Resize the image (constrain width, auto height, JPEG format)
+        const resizedPhoto = await ImageManipulator.manipulateAsync(
+          photo.uri,
+          [{ resize: { width: MAX_WIDTH } }],
+          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+        );
 
-        // Define a new, permanent URI in the app's document directory
-        const fileName = photo.uri.split('/').pop(); // Get original file name
+        // Generate a unique filename
+        const fileName = `photo_${Date.now()}.jpg`;
         const newPhotoUri = FileSystem.documentDirectory + 'photos/' + fileName;
 
-        // Ensure the 'photos' directory exists
+        // Ensure directory exists
         const dirInfo = await FileSystem.getInfoAsync(FileSystem.documentDirectory + 'photos/');
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(FileSystem.documentDirectory + 'photos/', { intermediates: true });
         }
 
-        // Copy the captured photo to the new, permanent location
-        await FileSystem.copyAsync({
-          from: photo.uri,
+        // Move (not copy) the resized file to permanent storage
+        await FileSystem.moveAsync({
+          from: resizedPhoto.uri,
           to: newPhotoUri,
         });
 
-        console.log("Copied photo to permanent URI:", newPhotoUri);
+        // Clean up the original photo
+        await FileSystem.deleteAsync(photo.uri);
 
-        router.replace({
-          pathname: '/quick-session',
-          params: { photoUri: newPhotoUri }, // Pass the permanent URI
-        });
+        console.log("Resized photo saved to:", newPhotoUri);
+        router.replace({ pathname: '/quick-session', params: { photoUri: newPhotoUri } });
       } catch (error) {
-        console.error("Failed to take picture or save file:", error);
+        console.error("Failed to take picture:", error);
       } finally {
         setIsCapturing(false);
       }

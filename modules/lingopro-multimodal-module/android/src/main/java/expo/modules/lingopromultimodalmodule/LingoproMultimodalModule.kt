@@ -6,6 +6,7 @@ import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.Promise
+import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
@@ -23,17 +24,21 @@ import java.util.UUID
 
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
 private const val DOWNLOAD_DIRECTORY = "llm_models"
-
-private const val MAX_TOKENS = 32000
-
-private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-private var activeJobs: MutableList<Job> = mutableListOf()
-private var activeModelHandle: Int? = null
+private const val NO_IMAGE = "NO_IMAGE"
+private const val MAX_TOKENS = 22000
 
 class LingoproMultimodalModule : Module() {
+    private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var activeJobs: MutableList<Job> = mutableListOf()
+    private var activeModelHandle: Int? = null
+
     private var nextHandle = 1
     private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
     private var modelHistoryContext = ""
+    private var imageHistoryPath = NO_IMAGE
+    private var imageHistorySummary = ""
+
+    // to avoid crashing when navigating the app
 
     private val activeDownloads = mutableMapOf<String, Job>()
     private val dbHelper by lazy {
@@ -66,6 +71,11 @@ class LingoproMultimodalModule : Module() {
                 ))
             }
         }
+    }
+
+    public fun updateSummaries(sum: String, imageSum: String) {
+        modelHistoryContext = sum
+        imageHistorySummary = imageSum
     }
 
     private fun copyFileToInternalStorageIfNeeded(modelName: String, context: Context): File {
@@ -152,6 +162,7 @@ class LingoproMultimodalModule : Module() {
         val model = LlmInferenceModel(
             appContext.reactContext!!,
             modelPath,
+            moduleCoroutineScope,
             maxTokens,
             topK,
             temperature.toFloat(),
@@ -159,6 +170,9 @@ class LingoproMultimodalModule : Module() {
             multiModal,
             inferenceListener = createInferenceListener(modelHandle)
         )
+        modelHistoryContext = ""
+        imageHistoryPath = NO_IMAGE
+        imageHistorySummary = ""
         modelMap[modelHandle] = model
         activeModelHandle = modelHandle
         return modelHandle
@@ -232,16 +246,68 @@ class LingoproMultimodalModule : Module() {
         "language", "word", "meaning", "writing", "wordType", "category1"
     )
 
+    private fun stringToList(input: String): List<String> {
+        val regex = """\[(.*?)\]""".toRegex() // Matches content inside []
+        val match = regex.find(input)
+        return match?.groupValues?.get(1)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?: emptyList()
+    }
+
+    fun processTools(toolsList: List<JSONObject>): List<JSONObject> {
+        val toolResults = mutableListOf<JSONObject>()
+
+        // Execute first 3 tools (or fewer if list is smaller)
+        for (call in toolsList.take(3)) {
+            try {
+                val result = executeTool(call)
+                toolResults.add(result.apply {
+                    put("tool_name", call.getString("name"))  // Add tool name to result
+                    put("success", !has("error"))  // Add success flag
+                })
+            } catch (e: Exception) {
+                toolResults.add(JSONObject().apply {
+                    put("tool_name", call.optString("name", "unknown"))
+                    put("error", e.message)
+                    put("success", false)
+                })
+            }
+        }
+
+        return toolResults
+    }
+
+    fun toolsToJsonList(toolsContent: String): List<JSONObject> {
+        return try {
+            val jsonArray = JSONArray(toolsContent.trim())
+            (0 until jsonArray.length())
+                .mapNotNull { i ->
+                    try {
+                        jsonArray.getJSONObject(i)  // Skip if not JSONObject
+                    } catch (e: Exception) {
+                        null  // Silently ignore non-object elements
+                    }
+                }
+        } catch (e: Exception) {
+            emptyList()  // Fallback for invalid JSON
+        }
+    }
+
     // <AI></AI> This is the response that we should return to the chat "gui response", index 0
     // <sum></sum> to append to context, index 1
+    private fun extractTagContent(text: String, startTag: String, endTag: String): String {
+        val pattern = "$startTag([\\s\\S]*?)$endTag".toRegex()
+        return pattern.find(text)?.groupValues?.get(1)?.trim() ?: ""
+    }
+
     private fun extractPromptTags(rawResponse: String): List<String> {
-        val aiPattern = "<AI>((.|\\n|\\t)*?)</AI>".toRegex()
-        val sumPattern = "<sum>((.|\\n|\\t)*?)</sum>".toRegex()
+        val aiContent = extractTagContent(rawResponse, "<AI>", "</AI>")
+        val sumContent = extractTagContent(rawResponse, "<sum>", "</sum>")
+        val imageContent = extractTagContent(rawResponse, "<ImageSum>", "</ImageSum>")
+        val toolsContent = extractTagContent(rawResponse, "<Tools>", "</Tools>")
 
-        val aiContent = aiPattern.find(rawResponse)?.groupValues?.get(1) ?: ""
-        val sumContent = sumPattern.find(rawResponse)?.groupValues?.get(1) ?: ""
-
-        return listOf(aiContent, sumContent)
+        return listOf(aiContent, sumContent, imageContent, toolsContent)
     }
 
     // Tool definitions (model-friendly format)
@@ -285,23 +351,6 @@ class LingoproMultimodalModule : Module() {
             }
             "${index + 1}. $name - $description. Requires: $required"
         }.joinToString("\n")
-    }
-
-
-    private fun parseToolCalls(response: String): List<JSONObject> {
-        return try {
-            val jsonRegex = Regex("""\{(?:[^{}]|(?R))*\}""")
-            val jsonMatch = jsonRegex.find(response.trim()) ?: return emptyList()
-            val json = JSONObject(jsonMatch.value)
-
-            val toolsArray = json.optJSONArray("tools") ?: return emptyList()
-            (0 until toolsArray.length()).mapNotNull { i ->
-                toolsArray.optJSONObject(i)?.takeIf { it.has("name") && it.has("parameters") }
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "Failed to parse tool calls: ${e.message}")
-            emptyList()
-        }
     }
 
 
@@ -587,8 +636,12 @@ class LingoproMultimodalModule : Module() {
                     }
                 """.trimIndent()
 
-                    val response =
-                        model.generateResponse(requestId, prompt, "") // Blocking call for simplicity
+                    val deferredResult = CompletableDeferred<String>()
+                    model.generateResponse(requestId, prompt, "") { finalResult ->
+                        deferredResult.complete(finalResult)
+                    }
+                    val response = deferredResult.await()
+
                     val jsonResponse = JSONObject(response)
                     val wordsArray = jsonResponse.getJSONArray("words")
 
@@ -652,10 +705,13 @@ class LingoproMultimodalModule : Module() {
                         }
 
                         Log.d(TAG, "🧠 Prompting model with: $prompt")
+
                         val response = try {
-                            model.generateResponse(requestId, prompt, "").also {
-                                Log.d(TAG, "✅ Model response: $it")
+                            val deferredResult = CompletableDeferred<String>()
+                            model.generateResponse(requestId, prompt, "") { finalResult ->
+                                deferredResult.complete(finalResult)
                             }
+                            deferredResult.await()
                         } catch (e: Exception) {
                             Log.e(TAG, "❌ Error during LLM response", e)
                             ""
@@ -682,13 +738,14 @@ class LingoproMultimodalModule : Module() {
                     }
 
                     Log.d(TAG, "✅ Final recommended topics: $result")
-                    promise.resolve(result.toString())
+                    promise.resolve(JSONObject(mapOf("topics" to result)).getJSONArray("topics").toString())
                 } catch (e: Exception) {
                     Log.e(TAG, "🔥 Failed to get recommended topics", e)
                     promise.reject("TOPIC_ERROR", "Failed to get recommended topics", e)
                 }
             }
         }
+
 
         AsyncFunction("getTopicPreview") { topic: String, language: String, promise: Promise ->
             CoroutineScope(Dispatchers.IO).launch {
@@ -719,8 +776,10 @@ class LingoproMultimodalModule : Module() {
             Log.d(TAG, "LingoproMultimodal OnDestroy: Cancelling all active jobs and cleaning up models.")
             activeJobs.forEach { it.cancel() }
             activeJobs.clear()
-            modelMap.values.forEach { it.close() }
-            modelMap.clear()
+            moduleCoroutineScope.launch {
+                modelMap.values.forEach { it.close() }
+                modelMap.clear()
+            }
         }
 
         AsyncFunction("createModel") { modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
@@ -759,6 +818,7 @@ class LingoproMultimodalModule : Module() {
                     val model = LlmInferenceModel(
                         appContext.reactContext!!,
                         modelFile.absolutePath,
+                        moduleCoroutineScope,
                         maxTokens,
                         topK,
                         temperature.toFloat(),
@@ -766,6 +826,10 @@ class LingoproMultimodalModule : Module() {
                         multiModal,
                         inferenceListener = createInferenceListener(modelHandle)
                     )
+                    modelHistoryContext = ""
+                    imageHistoryPath = NO_IMAGE
+                    imageHistorySummary = ""
+
                     modelMap[modelHandle] = model
                     withContext(Dispatchers.Main) {
                         promise.resolve(modelHandle)
@@ -808,6 +872,7 @@ class LingoproMultimodalModule : Module() {
                     val model = LlmInferenceModel(
                         appContext.reactContext!!,
                         modelFile.absolutePath,
+                        moduleCoroutineScope,
                         maxTokens,
                         topK,
                         temperature.toFloat(),
@@ -815,6 +880,10 @@ class LingoproMultimodalModule : Module() {
                         multiModal,
                         inferenceListener = createInferenceListener(modelHandle)
                     )
+                    modelHistoryContext = ""
+                    imageHistoryPath = NO_IMAGE
+                    imageHistorySummary = ""
+
                     modelMap[modelHandle] = model
                     withContext(Dispatchers.Main) {
                         promise.resolve(modelHandle)
@@ -841,6 +910,9 @@ class LingoproMultimodalModule : Module() {
                         model.close() // Close the underlying MediaPipe model
                         Log.d(TAG, "releaseModel: Model with handle $handle released.")
                         withContext(Dispatchers.Main) { promise.resolve(true) }
+                        modelHistoryContext = ""
+                        imageHistoryPath = NO_IMAGE
+                        imageHistorySummary = ""
                     } else {
                         Log.w(TAG, "releaseModel: No model found for handle $handle to release.")
                         withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
@@ -857,19 +929,23 @@ class LingoproMultimodalModule : Module() {
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean,  promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
+
                     val fixedSystemPrompt = """
                     System: 
-                        You are a language learning assistant with access to specific tools.
+                        You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
                         Return the summary of history and the new user query in between tags <sum></sum>
-                        and return your direct answer to the user request in between <AI></AI>
+                        return your direct answer to the user request in between <AI></AI>
+                        if you received an image return the description of the image in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools return <Tools>[]</Tools>
+                        Use tags only for formatting purposes and don't use them nested!
                         You are provided with the chat history between you and the user as the following
                     """.trimIndent()
+
                     val model = modelMap[handle]
                     if (model == null) {
                         promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
                         return@launch
                     }
-
 
                     sendEvent("logging", mapOf(
                         "handle" to handle,
@@ -880,7 +956,17 @@ class LingoproMultimodalModule : Module() {
                     var historyTokens = estimateTokens(modelHistoryContext)
 
                     if (promptTokens + historyTokens > MAX_TOKENS) {
-                        throw Exception("Input exceeds 32K tokens! (Current: $promptTokens + $historyTokens). Please create a new session")
+                        throw Exception("Input exceeds $MAX_TOKENS tokens! (Current: $promptTokens + $historyTokens). Please create a new session")
+                    }
+
+                    var imagePathSelected = imagePath
+                    // Prevent sending the same image to the model multiple times
+                    if (imageHistoryPath != NO_IMAGE && imagePath == imageHistoryPath) {
+                        // User re-submitted the same image
+                        imagePathSelected = NO_IMAGE
+                    } else {
+                        imagePathSelected = imagePath
+                        imageHistoryPath = imagePath
                     }
 
                     // Agentic implementation
@@ -891,14 +977,24 @@ class LingoproMultimodalModule : Module() {
                         val modifiedPrompt = """"
                             $fixedSystemPrompt
                             chat history context -> $modelHistoryContext
+                            image given by user before summary if exists, empty if not -> $imageHistorySummary
                             
                             User: 
                             $prompt"""
-                        Log.d(TAG, "Prompt without tools : $modifiedPrompt")
-                        val response = model.generateResponse(requestId, modifiedPrompt, imagePath)
+                        Log.d(TAG, "Prompt without tools and image $imagePathSelected: $modifiedPrompt")
+
+                        val deferredResult = CompletableDeferred<String>()
+                        model.generateResponse(requestId, modifiedPrompt, imagePathSelected) { finalResult ->
+                            deferredResult.complete(finalResult)
+                        }
+                        val response = deferredResult.await()
+
                         Log.d(TAG, "Resposne ${response}")
-                        val (aiContent, sumContent) =  extractPromptTags(response)
+                        val (aiContent, sumContent, imageContent, toolsContent) =  extractPromptTags(response)
+
                         modelHistoryContext = sumContent
+                        imageHistorySummary = imageContent
+
                         withContext(Dispatchers.Main) { promise.resolve(aiContent) }
                     }
                     else {
@@ -907,57 +1003,67 @@ class LingoproMultimodalModule : Module() {
                         val toolsPrompt = """
                             $fixedSystemPrompt
                             chat history context -> $modelHistoryContext
+                            image given by user before summary if exists, empty if not -> $imageHistorySummary
                             
                             # Available Tools -> ${summarizeTools(availableTools).trimIndent()}
                         
-                            # Response Format ->
-                            - Do NOT enclose the JSON array in markdown code blocks ( ``` json ... ``` ).
-                              {"tools": ["tool_name", ...]}
-                            - If no tools are needed, respond naturally to the user's query with the previous instructions, with only tags <sum></sum> and <AI></AI>
-                            
                             User:
                             # Current Query -> $prompt
                         """.trimIndent()
                         Log.d(TAG, "Tools prompt : $toolsPrompt")
-                        val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+
+                        val deferredResult = CompletableDeferred<String>()
+                        model.generateResponse(requestId, toolsPrompt, imagePathSelected) { finalResult ->
+                            deferredResult.complete(finalResult)
+                        }
+                        val rawResponse = deferredResult.await()
+
                         Log.d(TAG, "Model raw response: ${rawResponse}")
 
                         // Step 2: Parse tool calls (simplified example)
-                        val toolCalls = parseToolCalls(rawResponse)
-                        Log.d(TAG, "Parsed tool calls: ${toolCalls.size}")
+                        val (aiContent, sumContent, imageContent, toolsContent) =  extractPromptTags(rawResponse)
 
-                        if (toolCalls.isEmpty()) {
+                        var toolsJsonList = toolsToJsonList(toolsContent)
+                        modelHistoryContext = sumContent
+                        imageHistorySummary = imageContent
+                        imagePathSelected = ""
+
+                        Log.d(TAG, "Parsed tool list: ${toolsJsonList}")
+
+                        if (toolsJsonList.isEmpty()) {
                             // No tools needed; return raw response
                             Log.d(TAG, "No tools needed, returning raw response")
-                            val (aiContent, sumContent) =  extractPromptTags(rawResponse)
                             modelHistoryContext = sumContent
                             withContext(Dispatchers.Main) {
                                 promise.resolve(aiContent)
                             }
                         } else {
-                            // Step 3: Execute tools sequentially
-                            val toolResults = mutableListOf<JSONObject>()
-                            for (call in toolCalls.take(3)) {
-                                val result = executeTool(call)
-                                toolResults.add(result)
-                            }
+                            // Step 3: Execute tools sequentially (max 3 tools)
+                            val toolResults = processTools(toolsJsonList)
 
                             // Step 4: Send results back to the model for final response
                             val toolsResultPrompt = """
                                 $fixedSystemPrompt
                                 chat history context -> $modelHistoryContext
+                                image given by user before summary if exists, empty if not -> $imageHistorySummary
+                                
                                 Tool results -> ${toolResults.joinToString()}
+                                
                                 User:
                                 # Current Query -> $prompt
                             """.trimIndent()
-                            Log.d(TAG, "Tols prompt : $toolsResultPrompt")
-                            val finalResponse = model.generateResponse(
-                                requestId,
-                                toolsResultPrompt,
-                                imagePath
-                            )
-                            val (aiContent, sumContent) =  extractPromptTags(finalResponse)
+                            Log.d(TAG, "Tools prompt : $toolsResultPrompt")
+
+                            val deferredResult = CompletableDeferred<String>()
+                            model.generateResponse(requestId, toolsResultPrompt, imagePathSelected) { finalResult ->
+                                deferredResult.complete(finalResult)
+                            }
+                            val finalResponse = deferredResult.await()
+
+                            val (aiContent, sumContent, imageContent, toolsContent) =  extractPromptTags(finalResponse)
+
                             modelHistoryContext = sumContent
+                            imageHistorySummary = imageContent
                             withContext(Dispatchers.Main) { promise.resolve(aiContent) }
                         }
                     }
@@ -970,6 +1076,9 @@ class LingoproMultimodalModule : Module() {
                     withContext(Dispatchers.Main) { promise.reject("GENERATION_FAILED", e.message ?: "Unknown error", e) }
                 }
             }
+            synchronized(activeJobs) {
+                activeJobs.add(job)
+            }
             job.invokeOnCompletion { exception ->
                 synchronized(activeJobs) {
                     activeJobs.remove(job)
@@ -979,9 +1088,7 @@ class LingoproMultimodalModule : Module() {
                 }
             }
 
-            synchronized(activeJobs) {
-                activeJobs.add(job)
-            }
+
         }
 
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
@@ -989,11 +1096,15 @@ class LingoproMultimodalModule : Module() {
                 try {
                     val fixedSystemPrompt = """
                     System: 
-                        You are a language learning assistant with access to specific tools.
+                        You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
                         Return the summary of history and the new user query in between tags <sum></sum>
-                        and return your direct answer to the user request in between <AI></AI>
-                        You are provided with the chat history between you and the user as the following
+                        return your direct answer to the user request in between <AI></AI>
+                        if you received an image return the description of the image in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools return <Tools>[]</Tools>
+                        Use tags only for formatting purposes and don't use them nested!
+                        You are provided with the chat history between you and the user as the following (empty if new chat)
                     """.trimIndent()
+
                     val model = modelMap[handle]
                     if (model == null) {
                         withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
@@ -1012,120 +1123,99 @@ class LingoproMultimodalModule : Module() {
                     if (promptTokens + historyTokens > MAX_TOKENS) {
                         throw Exception("Input exceeds 32K tokens! (Current: $promptTokens + $historyTokens). Please create a new session")
                     }
+
+                    var imagePathSelected = imagePath
+                    if (imageHistoryPath != NO_IMAGE && imagePath == imageHistoryPath) {
+                        // User re-submitted the same image
+                        imagePathSelected = NO_IMAGE
+                    } else {
+                        imagePathSelected = imagePath
+                        imageHistoryPath = imagePath
+                    }
+
                     if(!useTools) {
                         Log.d(TAG, "Processing without tools")
                         val systemMessage = "If the user asks to add anything to SRS flashcards, guide them to activate tools mode first."
                         val modifiedPrompt = """"
                             $fixedSystemPrompt
                             chat history context -> $modelHistoryContext
+                            image given by user before summary if exists, empty if not -> $imageHistorySummary
                             
                             User: 
                             $prompt"""
-                        Log.d(TAG, "Prompt without tools : $modifiedPrompt")
+                        Log.d(TAG, "Prompt without tools and $imagePathSelected : $modifiedPrompt")
 
-                        model.generateResponseAsync(requestId, modifiedPrompt , imagePath) { result ->
-                            try {
-                                if (result.isEmpty()) {
-                                    sendEvent("logging", mapOf(
-                                        "handle" to handle,
-                                        "requestId" to requestId,
-                                        "message" to "Generation completed but returned empty result"
-                                    ))
-                                    promise.reject("GENERATION_FAILED", "Failed to generate response", null)
-                                } else {
-                                    sendEvent("logging", mapOf(
-                                        "handle" to handle,
-                                        "requestId" to requestId,
-                                        "message" to "Generation completed successfully with ${result.length} characters"
-                                    ))
-
-                                    // We don't resolve with the final result here anymore
-                                    // The client will assemble the full response from streaming events
-                                    promise.resolve(true)  // Just send success signal
-                                }
-                            } catch (e: Exception) {
-                                sendEvent("logging", mapOf(
-                                    "handle" to handle,
-                                    "requestId" to requestId,
-                                    "message" to "Error in async result callback: ${e.message}"
-                                ))
-                                // Only reject if not already settled
-                                promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
-                            }
+                        model.generateResponseAsync(requestId, modifiedPrompt , imagePathSelected) { resultChunk ->
+                            sendEvent("onPartialResponse", mapOf(
+                                "handle" to handle,
+                                "requestId" to requestId,
+                                "response" to resultChunk
+                            ))
                         }
                     } else {
                         Log.d(TAG, "Processing with tools enabled")
                         val toolsPrompt = """
                             $fixedSystemPrompt
                             chat history context -> $modelHistoryContext
+                            image given by user before summary if exists, empty if not -> $imageHistorySummary
                             
                             # Available Tools -> ${summarizeTools(availableTools).trimIndent()}
                         
-                            # Response Format ->
-                            - Do NOT enclose the JSON array in markdown code blocks ( ``` json ... ``` ).
-                              {"tools": ["tool_name", ...]}
-                            - If no tools are needed, respond naturally to the user's query with the previous instructions, with only tags <sum></sum> and <AI></AI>
-                            
                             User:
                             # Current Query -> $prompt
                         """.trimIndent()
+
                         Log.d(TAG, "Tools prompt : $toolsPrompt")
-                        val rawResponse = model.generateResponse(requestId, toolsPrompt, imagePath)
+
+                        val deferredResult = CompletableDeferred<String>()
+                        model.generateResponse(requestId, toolsPrompt, imagePathSelected) { finalResult ->
+                            deferredResult.complete(finalResult)
+                        }
+                        val rawResponse = deferredResult.await()
                         Log.d(TAG, "Model raw response: ${rawResponse}")
 
                         // Step 2: Parse tool calls (simplified example)
-                        val toolCalls = parseToolCalls(rawResponse)
-                        Log.d(TAG, "Parsed tool calls: ${toolCalls.size}")
+                        val (aiContent, sumContent, imageContent, toolsContent) =  extractPromptTags(rawResponse)
 
-                        if(toolCalls.isEmpty()) {
+                        var toolsJsonList = toolsToJsonList(toolsContent)
+                        modelHistoryContext = sumContent
+                        imageHistorySummary = imageContent
+                        imagePathSelected = ""
+
+                        Log.d(TAG, "Parsed tool list: ${toolsJsonList}")
+
+                        if(toolsJsonList.isEmpty()) {
                             sendEvent("onPartialResponse", mapOf(
                                 "handle" to handle,
                                 "requestId" to requestId,
                                 "response" to rawResponse
                             ))
-                            promise.resolve(true)  // Just send success signal
+                            withContext(Dispatchers.Main) { promise.resolve(true) } // Just send success signal
                         } else {
-                            // Step 3: Execute tools sequentially
-                            val toolResults = mutableListOf<JSONObject>()
-                            for (call in toolCalls.take(3)) {
-                                val result = executeTool(call)
-                                toolResults.add(result)
-                            }
+                            // Step 3: Execute tools sequentially (max 3 tools)
+                            val toolResults = processTools(toolsJsonList)
 
                             // Step 4: Send results back to the model for final response
                             val toolsResultPrompt = """
                                 $fixedSystemPrompt
                                 chat history context -> $modelHistoryContext
+                                image given by user before summary if exists, empty if not -> $imageHistorySummary
+                                
                                 Tool results -> ${toolResults.joinToString()}
+                                
                                 User:
                                 # Current Query -> $prompt
                             """.trimIndent()
-                            Log.d(TAG, "Tols prompt : $toolsResultPrompt")
+                            Log.d(TAG, "Tools prompt : $toolsResultPrompt")
 
-                            model.generateResponseAsync(requestId, toolsResultPrompt , imagePath) { result ->
-                                try {
-                                    if (result.isEmpty()) {
-                                        sendEvent("logging", mapOf(
-                                            "handle" to handle,
-                                            "requestId" to requestId,
-                                            "message" to "Generation completed but returned empty result"
-                                        ))
-                                        promise.reject("GENERATION_FAILED", "Failed to generate response", null)
-                                    } else {
-                                        // We don't resolve with the final result here anymore
-                                        // The client will assemble the full response from streaming events
-                                        promise.resolve(true)  // Just send success signal
-                                    }
-                                } catch (e: Exception) {
-                                    sendEvent("logging", mapOf(
-                                        "handle" to handle,
-                                        "requestId" to requestId,
-                                        "message" to "Error in async result callback: ${e.message}"
-                                    ))
-                                    // Only reject if not already settled
-                                    promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e)
-                                }
+                            model.generateResponseAsync(requestId, toolsResultPrompt , imagePathSelected) { streamingChunk ->
+                                sendEvent("onPartialResponse", mapOf(
+                                    "handle" to handle,
+                                    "requestId" to requestId,
+                                    "response" to streamingChunk
+                                ))
                             }
+                            withContext(Dispatchers.Main) { promise.resolve(true) }
                         }
 
                     }
@@ -1138,8 +1228,17 @@ class LingoproMultimodalModule : Module() {
                     withContext(Dispatchers.Main) { promise.reject("GENERATION_ERROR", e.message ?: "Unknown error", e) }
                 }
             }
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+            synchronized(activeJobs) {
+                activeJobs.add(job)
+            }
+            job.invokeOnCompletion { exception ->
+                synchronized(activeJobs) {
+                    activeJobs.remove(job)
+                }
+                if (exception is CancellationException) {
+                    promise.reject("CANCELLED", "Operation cancelled", exception)
+                }
+            }
         }
 
         // Check if model is downloaded

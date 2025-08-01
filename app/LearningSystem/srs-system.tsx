@@ -40,13 +40,13 @@ const PROGRESS_KEY = 'lingopro_language_progress';
 export default function SRSSystem() {
   const router = useRouter();
 
-  const {
-          modelHandle,
-          isModelLoaded,
-          isLoadingModel,
-          modelLoadError,
-          loadModel
-    } = useModel();
+//   const {
+//           modelHandle,
+//           isModelLoaded,
+//           isLoadingModel,
+//           modelLoadError,
+//           loadModel
+//     } = useModel();
 
   const [isDbInitialized, setIsDbInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -100,11 +100,11 @@ export default function SRSSystem() {
       };
 
       initializeDbStatus();
-      if (!isModelLoaded && !isLoadingModel) {
-          loadModel(DEFAULT_MODEL_PATH).catch(console.error);
-
-        }
-    }, [isModelLoaded, isLoadingModel, loadModel]);
+//       if (!isModelLoaded && !isLoadingModel) {
+//           loadModel(DEFAULT_MODEL_PATH).catch(console.error);
+//
+//         }
+    }, []);  // [isModelLoaded, isLoadingModel, loadModel]);
 
     useEffect(() => {
         if (isDbInitialized) {

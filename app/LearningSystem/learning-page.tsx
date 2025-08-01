@@ -2,8 +2,7 @@ import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-
+import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, BackHandler } from 'react-native';
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import { useModel } from '../context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "../initial-page";
@@ -38,7 +37,8 @@ export default function LearningPage() {
     isModelLoaded,
     isLoadingModel,
     modelLoadError,
-    loadModel
+    loadModel,
+    releaseLoadedModel
   } = useModel();
 
   const loadUserSettings = async () => {
@@ -69,6 +69,21 @@ export default function LearningPage() {
 
     }
   }, [isModelLoaded, isLoadingModel, loadModel]);
+
+  // release model when leaving this page
+  useEffect(() => {
+      const backAction = () => {
+        releaseLoadedModel(); // Release model before exiting
+        return false; // false lets the app continue exiting
+      };
+
+      const backHandler = BackHandler.addEventListener(
+        'hardwareBackPress',
+        backAction
+      );
+
+      return () => backHandler.remove(); // Cleanup
+    }, []);
 
   // --- Fetch Recommendations Effect ---
   useEffect(() => {

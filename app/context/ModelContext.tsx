@@ -63,7 +63,7 @@ export const ModelProvider: React.FC<ModelProviderProps> = ({ children }) => {
 
         const handle = await LingoProMultimodal.createModel(
           cleanedModelPath,
-          1024, // maxTokens
+          2048, // maxTokens
           3,    // topK
           0.7,  // temperature
           123,  // random seed
@@ -132,3 +132,8 @@ export const useModel = () => {
   }
   return context;
 };
+
+// Dummy default export for Next.js route requirements
+export default function ModelContextRoute() {
+  return null; // Or a simple placeholder
+}

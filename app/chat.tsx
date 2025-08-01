@@ -7,7 +7,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { default as ExpoLlmMediapipe, default as LingoProMultimodal, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, BackHandler  } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
@@ -35,7 +35,8 @@ export default function ChatScreen() {
     isModelLoaded,
     isLoadingModel,
     modelLoadError,
-    loadModel
+    loadModel,
+    releaseLoadedModel
   } = useModel();
 
   // This variable has the newest uploaded image by the user.
@@ -64,6 +65,8 @@ export default function ChatScreen() {
   const nextRequestIdRef = useRef(0);
   const streamingListenersRef = useRef<NativeModuleSubscription[]>([]);
 
+  const initialPromptSentRef = useRef(false);
+
 
   const clearStreamingListeners = useCallback(() => {
     streamingListenersRef.current.forEach(sub => sub.remove());
@@ -82,48 +85,54 @@ export default function ChatScreen() {
   };
 
 
-  useEffect(() => {
-    if (paramImageUri) {
-      console.log('Received image URI:', paramImageUri);
-      setImageUri(paramImageUri as string);
-      setMessages([
-        {
-          id: 'ai-initial',
-          text: "I can see the image. What would you like to discuss about it?",
-          sender: 'system',
-          timestamp: getTimestamp(),
-          imageUrl: paramImageUri,
-        },
-      ]);
-    } else {
-      console.warn("No photo URI provided for Chat. Redirecting to main page.");
-      router.replace('/main-page');
-      return; // Exit early if no image URI
-    }
+  // Handle initial image prompt and message display
+    useEffect(() => {
+      if (paramImageUri && isModelLoaded && !initialPromptSentRef.current) {
+        initialPromptSentRef.current = true;
+        console.log('Received image URI:', paramImageUri);
+        setImageUri(paramImageUri as string);
 
-    // If modelHandle is not valid, immediately show error and redirect
-    if (!isModelLoaded) {
-      return; // Exit early if model not ready
-    }
+        setMessages(prevMessages => [...prevMessages, {
+            id: Date.now().toString(),
+            text: "Here is an image for us to discuss.",
+            sender: 'user',
+            timestamp: getTimestamp(),
+            attachedImageUrl: paramImageUri,
+        }]);
 
-    (async () => {
-      const status = await AudioModule.requestRecordingPermissionsAsync();
-
-      if (!status.granted) {
-        Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
+        const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description";
+        processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
+      } else if (!paramImageUri) {
+        console.warn("No photo URI provided for Chat. Redirecting to main page.");
+        router.replace('/main-page');
       }
-    })();
+    }, [paramImageUri, isModelLoaded, processMessageWithAI, router]);
 
-    return () => {
-      if (recording) {
-        recording.stop();
-      }
-      if (waveformIntervalRef.current) {
-        clearInterval(waveformIntervalRef.current);
-      }
-      Speech.stop();
-    };
-  }, [paramImageUri, isModelLoaded]);
+
+    // Unload the model when leaving chat
+    useEffect(() => {
+          const backAction = () => {
+            releaseLoadedModel(); // Release model before exiting
+            return false; // false lets the app continue exiting
+          };
+
+          const backHandler = BackHandler.addEventListener(
+            'hardwareBackPress',
+            backAction
+          );
+
+          return () => backHandler.remove(); // Cleanup
+    }, [releaseLoadedModel, router]);
+
+    // Request audio permissions
+    useEffect(() => {
+      (async () => {
+        const status = await AudioModule.requestRecordingPermissionsAsync();
+        if (!status.granted) {
+          Alert.alert('Permission Required', 'Permission to access microphone is required for voice input.');
+        }
+      })();
+    }, []);
 
 
 
@@ -158,132 +167,133 @@ export default function ChatScreen() {
 
 
   const processMessageWithAI = useCallback(async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
-    if (!isModelLoaded) {
-      Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
-      return;
-    }
-
-    setAiThinking(true);
-    // No need to update voice message text since it's already showing as "Voice message"
-    try {
-      if (!modelHandle) {
-        throw new Error("modelHandle is null.");
+      if (!isModelLoaded) {
+        Alert.alert('AI Not Ready', 'The AI model is not loaded or its handle is missing. Please load it first.');
+        return;
       }
 
-      if (streamedMessage) {
-        setMessages(prevMessages => {
-          if (prevMessages.length === 0) {
-            return [streamedMessage]; // If no messages, just add it
-          }
+      setAiThinking(true);
+      try {
+        if (!modelHandle) {
+          throw new Error("modelHandle is null.");
+        }
 
-          // Insert before last message
-          return [
-            ...prevMessages.slice(0, -1), // All except last
-            streamedMessage,              // New streamed message
-            prevMessages[prevMessages.length - 1] // Last message
-          ];
-        });
-        setStreamedMessage(null);
-        setIsStreamingMessage(false);
-      }
-      clearStreamingListeners();
+        if (streamedMessage) {
+          setMessages(prevMessages => {
+            if (prevMessages.length === 0) {
+              return [streamedMessage];
+            }
+            return [
+              ...prevMessages.slice(0, -1),
+              streamedMessage,
+              prevMessages[prevMessages.length - 1]
+            ];
+          });
+          setStreamedMessage(null);
+          setIsStreamingMessage(false);
+        }
+        clearStreamingListeners();
 
-      // Since gemma-3n only has a maximum of 1 image per session
-      // we set the last uploaded image as the imageUri
-      if (msgImageUri) {
-        setImageUri(msgImageUri);
-      }
+        if (msgImageUri) {
+          setImageUri(msgImageUri);
+        }
 
+        const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+        const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
+        const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
 
-      console.log("Calling native module with:", { modelHandle, textInput, imageUri, audioUri });
-      // Pass the modelHandle to the native module
+        const currentRequestId = nextRequestIdRef.current++;
 
-      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
-      // const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
-      const promptAddition = "The language to learn:" + storedLanguage + ", The level of the user learning the language:" + storedLevel + " "
+        let isInAITag = false;
+        let filteredResponse = '';
 
-      const currentRequestId = nextRequestIdRef.current++;
+        const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
+          if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
+            setAiThinking(false);
+            setIsStreamingMessage(true);
 
-      const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
-        if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
-          setAiThinking(false);
-          setIsStreamingMessage(true);
-          setStreamedMessage(prev => {
-            // if no existing message, create new one
-            if (!prev) {
-              return {
-                id: (Date.now() + 1).toString(),
-                text: ev.response,
-                sender: 'system',
-                timestamp: getTimestamp()
-              };
+            // Process the response to filter based on <AI> tags
+            const response = ev.response;
+            let newText = '';
+
+            for (let i = 0; i < response.length; i++) {
+              if (response.substr(i, 4) === '<AI>') {
+                isInAITag = true;
+                i += 3; // skip the tag
+                continue;
+              }
+
+              if (response.substr(i, 5) === '</AI>') {
+                isInAITag = false;
+                i += 4; // skip the tag
+                continue;
+              }
+
+              if (isInAITag) {
+                newText += response[i];
+              }
             }
 
-            // otherwise, just update text
-            return {
-              ...prev,
-              text: prev.text + ev.response,
-            };
-          });
+            filteredResponse += newText;
+
+            setStreamedMessage(prev => {
+              if (!prev) {
+                return {
+                  id: (Date.now() + 1).toString(),
+                  text: filteredResponse,
+                  sender: 'system',
+                  timestamp: getTimestamp()
+                };
+              }
+              return {
+                ...prev,
+                text: filteredResponse,
+              };
+            });
+          }
+        });
+
+        streamingListenersRef.current.push(partialSub);
+
+        try {
+          await LingoProMultimodal.generateResponseAsync(
+            modelHandle,
+            currentRequestId,
+            promptAddition + textInput,
+            msgImageUri ?? imageUri ?? '',
+            useAgenticTools,
+          );
+          setIsStreamingMessage(false);
+        } catch (e) {
+          console.log("Error calling MediaPipe AI:", e);
         }
-      });
 
-      streamingListenersRef.current.push(partialSub);
-
-      // const errorSub = ExpoLlmMediapipe.addListener("onErrorResponse", (ev: ErrorResponseEventPayload) => {
-      //   if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
-      //     clearStreamingListeners(); // Clean up these specific listeners
-      //     nextRequestIdRef.current++;
-      //   }
-      // });
-      // streamingListenersRef.current.push(errorSub);
-
-      try {
-
-        await LingoProMultimodal.generateResponseAsync(
-          modelHandle,
-          currentRequestId,
-          promptAddition + textInput,
-          msgImageUri ?? imageUri ?? '',
-          useAgenticTools,
-        );
-        setIsStreamingMessage(false);
-      } catch (e) {
-        console.log("Error calling MediaPipe AI:", e);
+      } catch (error: any) {
+        console.error("Error calling MediaPipe AI:", error);
+        setMessages(prevMessages => [...prevMessages, {
+          id: Date.now().toString(),
+          text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
+          sender: 'system',
+          timestamp: getTimestamp()
+        }]);
+      } finally {
+        setAiThinking(false);
       }
-
-
-      // if (mode === 'voice') {
-      //   Speech.speak(aiResponseText, { language: 'en-US' });
-      // }
-
-    } catch (error: any) {
-      console.error("Error calling MediaPipe AI:", error);
-      setMessages(prevMessages => [...prevMessages, {
-        id: Date.now().toString(),
-        text: `Error: Could not get a response from local AI model. ${error.message || 'Please try again.'}`,
-        sender: 'system',
-        timestamp: getTimestamp()
-      }]);
-    } finally {
-      setAiThinking(false);
-    }
-  }, [
-    isModelLoaded,
-    modelHandle,
-    streamedMessage,
-    clearStreamingListeners,
-    setMessages,
-    setAiThinking,
-    setStreamedMessage,
-    setIsStreamingMessage,
-    setImageUri,
-    imageUri,
-    useAgenticTools,
-    nextRequestIdRef,
-    streamingListenersRef
-  ]);
+    }, [
+      isModelLoaded,
+      modelHandle,
+      streamedMessage,
+      clearStreamingListeners,
+      setMessages,
+      setAiThinking,
+      setStreamedMessage,
+      setIsStreamingMessage,
+      setImageUri,
+      imageUri,
+      useAgenticTools,
+      nextRequestIdRef,
+      streamingListenersRef
+    ]);
 
   const stopRecording = useCallback(async () => {
     if (waveformIntervalRef.current) {
