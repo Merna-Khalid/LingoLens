@@ -12,7 +12,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
 import { LANGUAGE_KEY, LEVEL_KEY } from './main-page';
-import ChatSuggestions from '../components/chat/ChatSuggestions';
 
 const ToolsToggle = ({ useAgenticTools, onToggle }: { useAgenticTools: boolean, onToggle: () => void }) => {
   return (
@@ -454,32 +453,8 @@ export default function ChatScreen() {
     />
   ], [useAgenticTools, handleToggleTools]);
 
-  // #region Suggestion Handler
-  const handleSuggestionClick = (suggestion: string) => {
-    setMessages(prevMessages => [
-      ...prevMessages,
-      {
-        id: Date.now().toString(),
-        text: suggestion,
-        sender: 'user',
-        timestamp: getTimestamp(),
-      },
-    ]);
-    processMessageWithAI(suggestion, null, selectedImage, 'text');
-  };
-  // #endregion
-
-  // Only show suggestions if inputText is empty and not streaming/thinking
-  const showSuggestions = !inputText && !iSStreamingMessage && !aiThinking;
-
   return (
-    // ====== MAIN VIEW REGION START ======
     <SafeAreaView style={styles.safeArea}>
-      {/* ====== DISPLAY: Chat Suggestions ====== */}
-      {showSuggestions && (
-        <ChatSuggestions onSuggestionClick={handleSuggestionClick} />
-      )}
-      {/* ====== DISPLAY: Chat Header ====== */}
       <ChatHeader
         title="AI Chat"
         onBack={handleBack}
