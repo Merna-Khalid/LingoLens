@@ -1,8 +1,9 @@
 import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
+import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Markdown from 'react-native-markdown-display';
 import { ChatMessage as ChatMessageType } from './types';
+import { Clipboard } from 'react-native';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -13,6 +14,11 @@ interface ChatMessageProps {
 }
 
 export default function ChatMessage({ message, isStreaming = false, isThinking = false, onPlayVoiceMessage, onPlayAiAudio }: ChatMessageProps) {
+  // #region copy to clipboard handler
+  const handleCopy = () => {
+    Clipboard.setString(message.text);
+  };
+  // #endregion
   return (
     <View
       style={[
@@ -36,44 +42,46 @@ export default function ChatMessage({ message, isStreaming = false, isThinking =
           onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} 
         />
       )}
-      {/* Audio message handling */}
-    {message.audioUri ? (
-      <View style={styles.voiceMessageContainer}>
-        <TouchableOpacity
-          style={styles.voicePlayButton}
-          onPress={() => onPlayVoiceMessage(message.audioUri!)}
-        >
-          <Icon name="play" size={20} color="#007AFF" />
-        </TouchableOpacity>
-        <Text style={styles.voiceMessageText}>Voice message</Text>
-      </View>
-    ) : (
-      /* Text message with Markdown support */
-      <Text style={styles.messageText}>
-        {message.sender === 'user' ? (
-          message.text
-        ) : (
-          <Markdown>
-            {message.text}
-          </Markdown>
-        )}
-      </Text>
-    )}
-
-    {/* Message footer with conditional TTS button */}
-    <View style={styles.messageFooter}>
-      {/* Only show TTS button for completed AI messages */}
-      {message.sender === 'system' && !isStreaming && !isThinking && (
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={() => onPlayAiAudio(message.text)}
-        >
-          <Icon name="volume-high" size={20} color="#666" />
-        </TouchableOpacity>
+      {/* #region main view: message text, audio, copy */}
+      {message.audioUri ? (
+        <View style={styles.voiceMessageContainer}>
+          <TouchableOpacity
+            style={styles.voicePlayButton}
+            onPress={() => onPlayVoiceMessage(message.audioUri!)}
+          >
+            <FontAwesome name="play" size={20} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.voiceMessageText}>Voice message</Text>
+        </View>
+      ) : (
+        <View style={{flexDirection: 'row', alignItems: 'center'}}>
+          {message.sender === 'user' ? (
+            <Text selectable style={styles.messageText}>{message.text}</Text>
+          ) : (
+            <View style={{flex: 1}}>
+              <Markdown>{message.text}</Markdown>
+            </View>
+          )}
+          <TouchableOpacity onPress={handleCopy} style={{marginLeft: 8, padding: 4}} accessibilityLabel="Copy to clipboard">
+            <Icon name="copy-outline" size={20} color="#888" />
+          </TouchableOpacity>
+        </View>
       )}
-      <Text style={styles.timestamp}>{message.timestamp}</Text>
+      {/* #endregion */}
+      {/* Message footer with conditional TTS button */}
+      <View style={styles.messageFooter}>
+        {/* Only show TTS button for completed AI messages */}
+        {message.sender === 'system' && !isStreaming && !isThinking && (
+          <TouchableOpacity
+            style={styles.playButton}
+            onPress={() => onPlayAiAudio(message.text)}
+          >
+            <Icon name="volume-high" size={20} color="#666" />
+          </TouchableOpacity>
+        )}
+        <Text style={styles.timestamp}>{message.timestamp}</Text>
+      </View>
     </View>
-  </View>
   );
 }
 
