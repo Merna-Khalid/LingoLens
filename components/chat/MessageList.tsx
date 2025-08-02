@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import Icon from 'react-native-vector-icons/Ionicons';
 import ChatMessage from './ChatMessage';
+import ChatSuggestions from './ChatSuggestions';
 import { ChatMessage as ChatMessageType } from './types';
 
 interface MessageListProps {
@@ -10,6 +12,10 @@ interface MessageListProps {
   aiThinking: boolean;
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
+  showSuggestions?: boolean;
+  onSuggestionClick?: (suggestion: string) => void;
+  isPlayingAudio?: boolean;
+  onCancelAudio?: () => void;
 }
 
 export default React.memo(function MessageList({
@@ -18,7 +24,11 @@ export default React.memo(function MessageList({
   isStreamingMessage,
   aiThinking,
   onPlayVoiceMessage,
-  onPlayAiAudio
+  onPlayAiAudio,
+  showSuggestions = false,
+  onSuggestionClick,
+  isPlayingAudio = false,
+  onCancelAudio
 }: MessageListProps) {
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -32,40 +42,65 @@ export default React.memo(function MessageList({
                                    !messages.some(msg => msg.id === streamedMessage.id);
 
     return (
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.chatContainer}
-        contentContainerStyle={styles.chatContentContainer}
-      >
-        {messages.map((message) => (
-          <ChatMessage
-            key={message.id}
-            message={message}
-            isStreaming={isStreamingMessage && message.id === streamedMessage?.id} // Completed messages are never streaming
-            isThinking={aiThinking}
-            onPlayVoiceMessage={onPlayVoiceMessage}
-            onPlayAiAudio={onPlayAiAudio}
-          />
-        ))}
-
-        {shouldShowStreamedMessage && (
-          <ChatMessage
-            key={streamedMessage.id}
-            message={streamedMessage}
-            isStreaming={true}
-            isThinking={aiThinking}
-            onPlayVoiceMessage={onPlayVoiceMessage}
-            onPlayAiAudio={onPlayAiAudio}
-          />
-        )}
-
-        {aiThinking && (
-          <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
-            <ActivityIndicator size="small" color="#333" />
-            <Text style={styles.timestamp}>AI is thinking...</Text>
+      <View style={{ flex: 1 }}>
+        {/* Cancel audio button (red) above input, right side */}
+        {isPlayingAudio && (
+          <View style={styles.cancelAudioContainer}>
+            <TouchableOpacity onPress={onCancelAudio} style={styles.cancelAudioButton}>
+              <Icon name="close-circle" size={32} color="#e53935" />
+            </TouchableOpacity>
           </View>
         )}
-      </ScrollView>
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.chatContainer}
+          contentContainerStyle={styles.chatContentContainer}
+        >
+          {messages.map((message) => {
+            const isStreamed = isStreamingMessage && message.id === streamedMessage?.id;
+            return (
+              <ChatMessage
+                key={message.id}
+                message={message}
+                isStreaming={isStreamed}
+                isThinking={isStreamed ? aiThinking : false}
+                onPlayVoiceMessage={onPlayVoiceMessage}
+                onPlayAiAudio={onPlayAiAudio}
+                animatePerChar={message.sender === 'system'}
+              />
+            );
+          })}
+
+          {shouldShowStreamedMessage && (
+            <ChatMessage
+              key={streamedMessage.id}
+              message={streamedMessage}
+              isStreaming={true}
+              isThinking={aiThinking}
+              onPlayVoiceMessage={onPlayVoiceMessage}
+              onPlayAiAudio={onPlayAiAudio}
+              // Pass prop to animate per character for system messages
+              animatePerChar={true}
+            />
+          )}
+
+          {aiThinking && (
+            // Only show AI is thinking if there is no system message with text
+            !(messages.some(m => m.sender === 'system' && m.text && m.text.trim() !== '')) && (
+              <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
+                <ActivityIndicator size="small" color="#333" />
+                <Text style={styles.timestamp}>AI is thinking...</Text>
+              </View>
+            )
+          )}
+        </ScrollView>
+        {/* Suggestions absolute above input */}
+        {showSuggestions && onSuggestionClick && (
+          <View style={styles.suggestionsContainer} pointerEvents="box-none">
+            <ChatSuggestions onSuggestionClick={onSuggestionClick} />
+          </View>
+        )}
+      </View>
     );
   });
 
@@ -107,5 +142,26 @@ const styles = StyleSheet.create({
     color: '#777',
     alignSelf: 'flex-end',
     marginLeft: 8,
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 100,
+    backgroundColor: '#f0f4f8',
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  cancelAudioContainer: {
+    position: 'absolute',
+    right: 10,
+    bottom: 70, // above input field
+    zIndex: 200,
+  },
+  cancelAudioButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 16,
+    padding: 2,
   },
 });

@@ -37,7 +37,7 @@ const styles = StyleSheet.create({
   container: {
     paddingVertical: 8,
     paddingHorizontal: 8,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },

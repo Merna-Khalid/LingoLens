@@ -1,9 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
-import Markdown from 'react-native-markdown-display';
 import { ChatMessage as ChatMessageType } from './types';
-import { Clipboard } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -11,81 +10,176 @@ interface ChatMessageProps {
   isThinking?: boolean;
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
+  animatePerChar?: boolean;
 }
 
-export default function ChatMessage({ message, isStreaming = false, isThinking = false, onPlayVoiceMessage, onPlayAiAudio }: ChatMessageProps) {
-  // #region copy to clipboard handler
+export default function ChatMessage({
+  message,
+  isStreaming = false,
+  isThinking = false,
+  onPlayVoiceMessage,
+  onPlayAiAudio,
+  animatePerChar = false,
+}: ChatMessageProps) {
+  // Copy to clipboard handler
   const handleCopy = () => {
     Clipboard.setString(message.text);
   };
-  // #endregion
+
+  // Animated text state for per-character animation
+  const [displayedText, setDisplayedText] = useState(animatePerChar ? '' : message.text);
+  const prevTextRef = React.useRef('');
+
+  useEffect(() => {
+    if (!animatePerChar) {
+      setDisplayedText(message.text);
+      prevTextRef.current = message.text;
+      return;
+    }
+    const prev = prevTextRef.current;
+    // Only animate if new text is longer and starts with previous
+    if (message.text.startsWith(prev) && message.text.length > prev.length) {
+      const chars = Array.from(message.text.slice(prev.length));
+      let i = 0;
+      function showNextChar() {
+        setDisplayedText(prev + chars.slice(0, i + 1).join(''));
+        if (i < chars.length - 1) {
+          i++;
+          setTimeout(showNextChar, 24);
+        } else {
+          prevTextRef.current = message.text;
+        }
+      }
+      if (chars.length > 0) showNextChar();
+    } else if (message.text.length <= prev.length || !message.text.startsWith(prev)) {
+      // Only set immediately if text was replaced or shortened or finalized
+      setDisplayedText(message.text);
+      prevTextRef.current = message.text;
+    }
+    // eslint-disable-next-line
+  }, [message.text, animatePerChar]);
+
   return (
     <View
       style={[
-        styles.messageBubble,
-        message.sender === 'user' ? styles.userBubble : styles.aiBubble,
+        styles.messageRow,
+        message.sender === 'user' ? styles.rowRight : styles.rowLeft,
       ]}
     >
-      {message.imageUrl && (
-        <Image 
-          source={{ uri: message.imageUrl }} 
-          style={styles.messageImage} 
-          resizeMode="cover" 
-          onError={(e) => console.log('Image Error:', e.nativeEvent.error)} 
-        />
-      )}
-      {message.attachedImageUrl && (
-        <Image 
-          source={{ uri: message.attachedImageUrl }} 
-          style={styles.messageImage} 
-          resizeMode="cover" 
-          onError={(e) => console.log('Attached Image Error:', e.nativeEvent.error)} 
-        />
-      )}
-      {/* #region main view: message text, audio, copy */}
-      {message.audioUri ? (
-        <View style={styles.voiceMessageContainer}>
-          <TouchableOpacity
-            style={styles.voicePlayButton}
-            onPress={() => onPlayVoiceMessage(message.audioUri!)}
-          >
-            <FontAwesome name="play" size={20} color="#007AFF" />
-          </TouchableOpacity>
-          <Text style={styles.voiceMessageText}>Voice message</Text>
-        </View>
-      ) : (
-        <View style={{flexDirection: 'row', alignItems: 'center'}}>
-          {message.sender === 'user' ? (
-            <Text selectable style={styles.messageText}>{message.text}</Text>
-          ) : (
-            <View style={{flex: 1}}>
-              <Markdown>{message.text}</Markdown>
-            </View>
+      {/* Show action buttons on the empty side */}
+      {message.sender === 'user' && (
+        <View style={styles.actionColumn}>
+          {message.audioUri && !isStreaming && (
+            <TouchableOpacity
+              style={styles.voicePlayButton}
+              onPress={() => onPlayVoiceMessage(message.audioUri!)}
+            >
+              <FontAwesome name="play" size={20} color="#007AFF" />
+            </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={handleCopy} style={{marginLeft: 8, padding: 4}} accessibilityLabel="Copy to clipboard">
-            <Icon name="copy-outline" size={20} color="#888" />
-          </TouchableOpacity>
+          {!message.audioUri && !isStreaming && (
+            <TouchableOpacity
+              onPress={handleCopy}
+              style={styles.iconButton}
+              accessibilityLabel="Copy to clipboard"
+            >
+              <FontAwesome name="copy" size={20} color="#888" />
+            </TouchableOpacity>
+          )}
         </View>
       )}
-      {/* #endregion */}
-      {/* Message footer with conditional TTS button */}
-      <View style={styles.messageFooter}>
-        {/* Only show TTS button for completed AI messages */}
-        {message.sender === 'system' && !isStreaming && !isThinking && (
-          <TouchableOpacity
-            style={styles.playButton}
-            onPress={() => onPlayAiAudio(message.text)}
-          >
-            <Icon name="volume-high" size={20} color="#666" />
-          </TouchableOpacity>
+      {/* Message bubble and content */}
+      <View
+        style={[
+          styles.messageBubble,
+          message.sender === 'user' ? styles.userBubble : styles.aiBubble,
+        ]}
+      >
+        {message.imageUrl && (
+          <Image
+            source={{ uri: message.imageUrl }}
+            style={styles.messageImage}
+            resizeMode="cover"
+            onError={e => console.log('Image Error:', e.nativeEvent.error)}
+          />
         )}
-        <Text style={styles.timestamp}>{message.timestamp}</Text>
+        {message.attachedImageUrl && (
+          <Image
+            source={{ uri: message.attachedImageUrl }}
+            style={styles.messageImage}
+            resizeMode="cover"
+            onError={e => console.log('Attached Image Error:', e.nativeEvent.error)}
+          />
+        )}
+        {message.audioUri ? (
+          <Text style={styles.voiceMessageText}>Voice message</Text>
+        ) : (
+          <Text selectable style={styles.messageText}>
+            {animatePerChar ? displayedText : message.text}
+          </Text>
+        )}
+        <View style={styles.messageFooter}>
+          <Text style={styles.timestamp}>{message.timestamp}</Text>
+        </View>
       </View>
+      {/* Show action buttons for system messages on the right */}
+      {message.sender === 'system' && (
+        <View style={styles.actionColumn}>
+          {message.audioUri && !isStreaming && (
+            <TouchableOpacity
+              style={styles.voicePlayButton}
+              onPress={() => onPlayVoiceMessage(message.audioUri!)}
+            >
+              <FontAwesome name="play" size={20} color="#007AFF" />
+            </TouchableOpacity>
+          )}
+          {!message.audioUri && !isStreaming && (
+            <TouchableOpacity
+              onPress={handleCopy}
+              style={styles.iconButton}
+              accessibilityLabel="Copy to clipboard"
+            >
+              <FontAwesome name="copy" size={20} color="#888" />
+            </TouchableOpacity>
+          )}
+          {/* Play TTS for AI text */}
+          {message.sender === 'system' && !isStreaming && !isThinking && (
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => onPlayAiAudio(message.text)}
+            >
+              <FontAwesome name="volume-up" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 10,
+    width: '100%',
+  },
+  rowLeft: {
+    justifyContent: 'flex-start',
+  },
+  rowRight: {
+    justifyContent: 'flex-end',
+  },
+  actionColumn: {
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    minWidth: 36,
+    marginHorizontal: 2,
+    gap: 8,
+  },
+  iconButton: {
+    padding: 4,
+  },
   messageBubble: {
     maxWidth: '80%',
     padding: 12,
