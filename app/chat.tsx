@@ -422,7 +422,7 @@ export default function ChatScreen() {
         attachedImageUrl: paramImageUri,
       }]);
 
-      const initialPrompt = "Can you describe the image in English and in the learning language, in between <sumImage></sumImage> put only English description";
+      const initialPrompt = "Can you describe the image in English and in the learning language.";
       processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
     } else if (!paramImageUri) {
       console.warn("No photo URI provided for Chat. Redirecting to main page.");

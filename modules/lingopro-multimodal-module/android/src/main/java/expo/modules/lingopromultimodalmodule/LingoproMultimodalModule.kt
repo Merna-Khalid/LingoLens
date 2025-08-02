@@ -933,7 +933,7 @@ class LingoproMultimodalModule : Module() {
                     val fixedSystemPrompt = """
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
-                        if you received an image return the description of the image in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                         return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
@@ -1099,7 +1099,7 @@ class LingoproMultimodalModule : Module() {
                     val fixedSystemPrompt = """
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
-                        if you received an image return the description of the image in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                         return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
