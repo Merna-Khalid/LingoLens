@@ -11,6 +11,7 @@ interface ChatMessageProps {
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
   animatePerChar?: boolean;
+  onEndAnimatePerChar?: () => void;
 }
 
 export default function ChatMessage({
@@ -20,6 +21,7 @@ export default function ChatMessage({
   onPlayVoiceMessage,
   onPlayAiAudio,
   animatePerChar = false,
+  onEndAnimatePerChar,
 }: ChatMessageProps) {
   // Copy to clipboard handler
   const handleCopy = () => {
@@ -54,6 +56,7 @@ export default function ChatMessage({
         if (i >= newChars.length) {
           clearInterval(interval);
           prevTextRef.current = message.text;
+          if (onEndAnimatePerChar) onEndAnimatePerChar();
         }
       }, 18); // ~55 chars/sec
       return () => clearInterval(interval);
@@ -64,8 +67,9 @@ export default function ChatMessage({
       // If message changed in a non-append way, just set it
       setDisplayedText(message.text);
       prevTextRef.current = message.text;
+      if (onEndAnimatePerChar) onEndAnimatePerChar();
     }
-  }, [message.text, animatePerChar]);
+  }, [message.text, animatePerChar, onEndAnimatePerChar]);
 
   return (
     <View

@@ -16,7 +16,9 @@ interface MessageListProps {
   onSuggestionClick?: (suggestion: string) => void;
   isPlayingAudio?: boolean;
   onCancelAudio?: () => void;
-  enableAnimatePerChar?: boolean; // <-- add this
+  enableAnimatePerChar?: boolean;
+  isStreamedSystemMessage?: boolean;
+  onEndAnimatePerChar?: () => void;
 }
 
 export default React.memo(function MessageList({
@@ -30,7 +32,9 @@ export default React.memo(function MessageList({
   onSuggestionClick,
   isPlayingAudio = false,
   onCancelAudio,
-  enableAnimatePerChar = false // <-- add this
+  enableAnimatePerChar = false,
+  isStreamedSystemMessage = false,
+  onEndAnimatePerChar,
 }: MessageListProps) {
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -68,7 +72,7 @@ export default React.memo(function MessageList({
                 isThinking={isStreamed ? aiThinking : false}
                 onPlayVoiceMessage={onPlayVoiceMessage}
                 onPlayAiAudio={onPlayAiAudio}
-                animatePerChar={enableAnimatePerChar && message.sender === 'system'}
+                animatePerChar={false}
               />
             );
           })}
@@ -82,6 +86,7 @@ export default React.memo(function MessageList({
               onPlayVoiceMessage={onPlayVoiceMessage}
               onPlayAiAudio={onPlayAiAudio}
               animatePerChar={enableAnimatePerChar}
+              onEndAnimatePerChar={onEndAnimatePerChar}
             />
           )}
 
