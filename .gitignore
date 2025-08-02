@@ -37,3 +37,4 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+/modules/lingopro-multimodal-module/android/build
