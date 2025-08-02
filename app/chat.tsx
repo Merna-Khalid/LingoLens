@@ -420,7 +420,7 @@ export default function ChatScreen() {
         attachedImageUrl: paramImageUri,
       }]);
 
-      const initialPrompt = "reply with 100 characters only";
+      const initialPrompt = "Can you describe the image in English and in the learning language.";
       processMessageWithAI(initialPrompt, null, "", 'text');
     } else if (!paramImageUri) {
       router.replace('/main-page');

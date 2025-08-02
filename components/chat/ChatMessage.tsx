@@ -36,27 +36,35 @@ export default function ChatMessage({
       prevTextRef.current = message.text;
       return;
     }
+    // Only animate new characters appended to the message
     const prev = prevTextRef.current;
-    // Only animate if new text is longer and starts with previous
-    if (message.text.startsWith(prev) && message.text.length > prev.length) {
-      const chars = Array.from(message.text.slice(prev.length));
+    if (
+      message.text.startsWith(prev) &&
+      message.text.length > prev.length
+    ) {
+      // Animate only the new characters
+      const newChars = message.text.slice(prev.length);
       let i = 0;
-      function showNextChar() {
-        setDisplayedText(prev + chars.slice(0, i + 1).join(''));
-        if (i < chars.length - 1) {
-          i++;
-          setTimeout(showNextChar, 24);
-        } else {
+      const interval = setInterval(() => {
+        setDisplayedText((current) => {
+          const next = prev + newChars.slice(0, i + 1);
+          return next;
+        });
+        i++;
+        if (i >= newChars.length) {
+          clearInterval(interval);
           prevTextRef.current = message.text;
         }
-      }
-      if (chars.length > 0) showNextChar();
-    } else if (message.text.length <= prev.length || !message.text.startsWith(prev)) {
-      // Only set immediately if text was replaced or shortened or finalized
+      }, 18); // ~55 chars/sec
+      return () => clearInterval(interval);
+    } else if (
+      message.text.length < prev.length ||
+      !message.text.startsWith(prev)
+    ) {
+      // If message changed in a non-append way, just set it
       setDisplayedText(message.text);
       prevTextRef.current = message.text;
     }
-    // eslint-disable-next-line
   }, [message.text, animatePerChar]);
 
   return (
