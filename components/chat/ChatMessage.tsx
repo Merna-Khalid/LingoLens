@@ -101,6 +101,7 @@ export default function ChatMessage({
         style={[
           styles.messageBubble,
           message.sender === 'user' ? styles.userBubble : styles.aiBubble,
+          { alignSelf: message.sender === 'user' ? 'flex-end' : 'flex-start', minWidth: 60, maxWidth: '90%' }, // ensure bubble grows and doesn't crop
         ]}
       >
         {message.imageUrl && (
@@ -122,9 +123,11 @@ export default function ChatMessage({
         {message.audioUri ? (
           <Text style={styles.voiceMessageText}>Voice message</Text>
         ) : (
-          <Text selectable style={styles.messageText}>
-            {animatePerChar ? displayedText : message.text}
-          </Text>
+          <View style={styles.textContainer}>
+            <Text selectable style={styles.messageText}>
+              {animatePerChar ? displayedText : message.text}
+            </Text>
+          </View>
         )}
         <View style={styles.messageFooter}>
           <Text style={styles.timestamp}>{message.timestamp}</Text>
@@ -200,6 +203,14 @@ const styles = StyleSheet.create({
     elevation: 1,
     flexDirection: 'column',
     alignItems: 'flex-start',
+    alignSelf: 'auto',
+    minWidth: 60,
+    maxWidth: '90%',
+  },
+  textContainer: {
+    flexShrink: 1,
+    flexGrow: 1,
+    alignSelf: 'stretch',
   },
   userBubble: {
     alignSelf: 'flex-end',

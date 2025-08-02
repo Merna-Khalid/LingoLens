@@ -38,3 +38,6 @@ yarn-error.*
 
 app-example
 /modules/lingopro-multimodal-module/android/build
+/.idea
+.idea/misc.xml
+.idea/copilotDiffState.xml
