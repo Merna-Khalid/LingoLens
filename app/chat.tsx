@@ -27,9 +27,8 @@ const ToolsToggle = ({ useAgenticTools, onToggle }: { useAgenticTools: boolean, 
 };
 
 export default function ChatScreen() {
-  // Receive modelHandle along with photoUri and initialMode
   const { photoUri: paramImageUri, initialMode } = useLocalSearchParams<{ photoUri: string; initialMode?: InputMode }>();
-
+  // Receive modelHandle along with photoUri and initialMode
   const {
     modelHandle,
     isModelLoaded,
@@ -67,6 +66,18 @@ export default function ChatScreen() {
 
   const initialPromptSentRef = useRef(false);
 
+  // --- Suggestions state and handlers ---
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(true);
+  const handleSuggestionClick = useCallback((suggestion: string) => {
+    setInputText(suggestion);
+    setShowSuggestions(false);
+  }, []);
+
+  // Always show suggestions when inputText is null or empty
+  useEffect(() => {
+    if (!inputText || inputText.trim() === "") setShowSuggestions(true);
+    else setShowSuggestions(false);
+  }, [inputText]);
 
   const clearStreamingListeners = useCallback(() => {
     streamingListenersRef.current.forEach(sub => sub.remove());
@@ -84,10 +95,6 @@ export default function ChatScreen() {
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-
-
-
-
   // --- Audio Recording Functions ---
   const startRecording = useCallback(async () => {
     if (!isModelLoaded) {
@@ -95,7 +102,6 @@ export default function ChatScreen() {
       return;
     }
     try {
-      // setIsRecording(true);
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
@@ -116,7 +122,6 @@ export default function ChatScreen() {
       Alert.alert('Recording Error', 'Failed to start recording. Please check microphone permissions.');
     }
   }, [isModelLoaded, audioRecorder]);
-
 
   const processMessageWithAI = useCallback(async (textInput: string, audioUri: string | null, msgImageUri: string | null, mode: InputMode) => {
     if (!isModelLoaded) {
@@ -190,7 +195,6 @@ export default function ChatScreen() {
                   state = 'SEEKING_AI';
                   buffer = '';
                 } else {
-                  // Wasn't a closing tag - return to IN_AI state
                   cleanText += buffer;
                   buffer = '';
                   state = 'IN_AI';
@@ -213,14 +217,6 @@ export default function ChatScreen() {
               ...prev,
               text: prev.text + cleanText
             };
-
-            // Also update in messages array
-            //             setMessages(prevMsgs =>
-            //               prevMsgs.map(msg =>
-            //                 msg.id === updated.id ? updated : msg
-            //               )
-            //             );
-
             return updated;
           });
         }
@@ -281,7 +277,6 @@ export default function ChatScreen() {
       return;
     }
 
-    console.log('Stopping recording');
     try {
       await recording.stop();
       await setAudioModeAsync({
@@ -292,7 +287,6 @@ export default function ChatScreen() {
       const uri = recording.uri;
       if (uri) {
         setUri(uri);
-        console.log('Recording stopped and stored at', uri);
 
         const userMessage: ChatMessageType = {
           id: Date.now().toString(),
@@ -304,11 +298,8 @@ export default function ChatScreen() {
 
         setMessages(prevMessages => [...prevMessages, userMessage]);
         processMessageWithAI("Voice message", uri, null, 'voice');
-
-        // Switch back to text mode after recording
         setCurrentMode('text');
       } else {
-        console.error('Recording URI is null.');
         Alert.alert('Recording Error', 'Could not get recorded audio. Please try again.');
       }
     } catch (err) {
@@ -320,8 +311,6 @@ export default function ChatScreen() {
     recording,
     processMessageWithAI,
   ]);
-
-  // --- AI Message Processing ---
 
   const handleSendText = useCallback(() => {
     if (inputText.trim() || selectedImage) {
@@ -340,19 +329,33 @@ export default function ChatScreen() {
     }
   }, [inputText, selectedImage, processMessageWithAI]);
 
+  // Track if audio is currently playing
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   // Function to play AI message audio
   const playAiMessageAudio = useCallback((textToSpeak: string) => {
-    Speech.speak(textToSpeak, { language: 'en-US' });
+    setIsPlayingAudio(true);
+    Speech.speak(textToSpeak, {
+      language: 'en-US',
+      onDone: () => setIsPlayingAudio(false),
+      onStopped: () => setIsPlayingAudio(false),
+      onError: () => setIsPlayingAudio(false),
+    });
   }, []);
-
 
   // Function to play voice message audio
   const playVoiceMessage = useCallback((audioUri: string) => {
     setUri(audioUri);
+    setIsPlayingAudio(true);
     audioPlayer.play();
+    // You may want to add a listener to setIsPlayingAudio(false) when playback ends
   }, [audioPlayer]);
 
+  // Function to stop TTS audio
+  const handleCancelAudio = useCallback(() => {
+    Speech.stop();
+    setIsPlayingAudio(false);
+  }, []);
 
   // Function to handle image selection
   const handleImageSelection = useCallback(async () => {
@@ -363,7 +366,6 @@ export default function ChatScreen() {
         Alert.alert('Permission Required', 'Permission to access photos is required.');
         return;
       }
-
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'images',
@@ -384,10 +386,9 @@ export default function ChatScreen() {
     setSelectedImage(null);
   }, []);
 
-
   const toggleInputMode = useCallback(() => {
     if (recording && recording.isRecording) {
-      stopRecording(); // Stop recording before switching mode
+      stopRecording();
     }
     setCurrentMode(prevMode => (prevMode === 'text' ? 'voice' : 'text'));
   }, [recording]);
@@ -411,7 +412,6 @@ export default function ChatScreen() {
   useEffect(() => {
     if (paramImageUri && isModelLoaded && !initialPromptSentRef.current) {
       initialPromptSentRef.current = true;
-      console.log('Received image URI:', paramImageUri);
       setImageUri(paramImageUri as string);
 
       setMessages(prevMessages => [...prevMessages, {
@@ -425,17 +425,15 @@ export default function ChatScreen() {
       const initialPrompt = "Can you describe the image in English and in the learning language.";
       processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
     } else if (!paramImageUri) {
-      console.warn("No photo URI provided for Chat. Redirecting to main page.");
       router.replace('/main-page');
     }
   }, [paramImageUri, isModelLoaded, processMessageWithAI]);
 
-
   // Unload the model when leaving chat
   useEffect(() => {
     const backAction = () => {
-      releaseLoadedModel(); // Release model before exiting
-      return false; // false lets the app continue exiting
+      releaseLoadedModel();
+      return false;
     };
 
     const backHandler = BackHandler.addEventListener(
@@ -443,7 +441,7 @@ export default function ChatScreen() {
       backAction
     );
 
-    return () => backHandler.remove(); // Cleanup
+    return () => backHandler.remove();
   }, [releaseLoadedModel, router]);
 
   // Request audio permissions
@@ -456,6 +454,7 @@ export default function ChatScreen() {
     })();
   }, []);
 
+  // ====== MAIN VIEW REGION START ======
   return (
     <SafeAreaView style={styles.safeArea}>
       <ChatHeader
@@ -463,14 +462,13 @@ export default function ChatScreen() {
         onBack={handleBack}
         rightComponents={rightComponents}
       />
-
       <ModelLoadingOverlay isVisible={isLoadingModel} />
-
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        {/* ====== DISPLAY: Main Chat View ====== */}
         <MessageList
           messages={messages}
           streamedMessage={streamedMessage}
@@ -478,8 +476,12 @@ export default function ChatScreen() {
           aiThinking={aiThinking}
           onPlayVoiceMessage={playVoiceMessage}
           onPlayAiAudio={playAiMessageAudio}
+          showSuggestions={showSuggestions}
+          onSuggestionClick={handleSuggestionClick}
+          isPlayingAudio={isPlayingAudio}
+          onCancelAudio={handleCancelAudio}
         />
-
+        {/* ====== DISPLAY: Message Input ====== */}
         <MessageInput
           currentMode={currentMode}
           inputText={inputText}
@@ -496,6 +498,8 @@ export default function ChatScreen() {
           onToggleMode={toggleInputMode}
           onStartRecording={startRecording}
           onStopRecording={stopRecording}
+          isPlayingAudio={isPlayingAudio}
+          onCancelAudio={handleCancelAudio}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -527,5 +531,15 @@ const styles = StyleSheet.create({
   },
   toolsButtonTextActive: {
     color: '#fff',
-  }
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 70, // adjust as needed to sit above input
+    zIndex: 100,
+    backgroundColor: '#f0f4f8',
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
 });

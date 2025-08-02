@@ -17,6 +17,7 @@ interface MessageInputProps {
   isModelReady: boolean;
   isLoadingModel: boolean;
   isStreamingMessage: boolean;
+  isPlayingAudio?: boolean;
   onTextChange: (text: string) => void;
   onSendText: () => void;
   onImageSelect: () => void;
@@ -24,6 +25,7 @@ interface MessageInputProps {
   onToggleMode: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  onCancelAudio?: () => void;
 }
 
 export default React.memo(function MessageInput({
@@ -42,6 +44,8 @@ export default React.memo(function MessageInput({
   onToggleMode,
   onStartRecording,
   onStopRecording,
+  isPlayingAudio = false,
+  onCancelAudio,
 }: MessageInputProps) {
   const isDisabled = !isModelReady || isLoadingModel || isStreamingMessage;
 

@@ -1149,6 +1149,7 @@ class LingoproMultimodalModule : Module() {
                             $prompt"""
                         Log.d(TAG, "Prompt without tools and $imagePathSelected : $modifiedPrompt")
 
+
                         model.generateResponseAsync(requestId, modifiedPrompt , imagePathSelected) { resultChunk ->
                             if (resultChunk.isEmpty()) {
                                 sendEvent("logging", mapOf(
