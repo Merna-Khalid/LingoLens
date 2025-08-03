@@ -1,7 +1,7 @@
 import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, BackHandler } from 'react-native';
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import { useModel } from '../context/ModelContext';
@@ -41,57 +41,57 @@ export default function LearningPage() {
     releaseLoadedModel
   } = useModel();
 
+  // State variables
+  const [isDbInitialized, setIsDbInitialized] = useState(true);
+  const [selectedLanguage, setSelectedLanguage] = useState('English');
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [recommendedTopics, setRecommendedTopics] = useState<{ priorityTopics: TopicPreview[], otherTopics: TopicPreview[] }>({ priorityTopics: [], otherTopics: [] });
+  const [customTopic, setCustomTopic] = useState('');
+  const [numberOfCards, setNumberOfCards] = useState('5');
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
+
+  // Using useRef to hold the AbortController instance
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const loadUserSettings = async () => {
     try {
       const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-      const storedLevel = await AsyncStorage.getItem(LEVEL_KEY);
-      const storedProgressJson = await AsyncStorage.getItem(PROGRESS_KEY);
-
       if (storedLanguage) setSelectedLanguage(storedLanguage);
-      console.log('Loaded settings:', { storedLanguage, storedLevel, storedProgressJson });
+      console.log('Loaded settings:', { storedLanguage });
     } catch (error) {
       console.error('Failed to load user settings:', error);
     }
   };
 
-  const [isDbInitialized, setIsDbInitialized] = useState(true); // Assuming true if navigated here
-  const [selectedLanguage, setSelectedLanguage] = useState('English'); // Default, or get from params/AsyncStorage
-
-  const [isLoadingContent, setIsLoadingContent] = useState(false);
-
-  const [recommendedTopics, setRecommendedTopics] = useState<{ priorityTopics: TopicPreview[], otherTopics: TopicPreview[] }>({ priorityTopics: [], otherTopics: [] });
-  const [customTopic, setCustomTopic] = useState('');
-  const [numberOfCards, setNumberOfCards] = useState('5'); // Default to 5 cards
-
+  // --- MODEL LOADING AND RELEASE ---
   useEffect(() => {
     if (!isModelLoaded && !isLoadingModel) {
       loadModel(DEFAULT_MODEL_PATH).catch(console.error);
-
     }
   }, [isModelLoaded, isLoadingModel, loadModel]);
 
-  // release model when leaving this page
+  // Handle back button press to cancel ongoing requests and release the model
   useEffect(() => {
-      const backAction = () => {
-        releaseLoadedModel(); // Release model before exiting
-        return false; // false lets the app continue exiting
-      };
+    const backAction = () => {
+      // First, check if there's an active request to cancel
+      if (abortControllerRef.current) {
+        console.log("Back button pressed, aborting request...");
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear the reference
+      }
+      // Then, release the model
+      releaseLoadedModel();
+      return false;
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [releaseLoadedModel]);
 
-      const backHandler = BackHandler.addEventListener(
-        'hardwareBackPress',
-        backAction
-      );
-
-      return () => backHandler.remove(); // Cleanup
-    }, []);
-
-  // --- Fetch Recommendations Effect ---
+  // --- FETCH RECOMMENDATIONS ---
   useEffect(() => {
     loadUserSettings();
     const fetchRecommendations = async () => {
       if (!isModelLoaded) {
-        // If the model is not loaded, we simply wait for it.
-        // The ModelProvider's useEffect is responsible for initiating loadModel().
         console.log("Model not loaded yet. Waiting for model to load...");
         return;
       }
@@ -100,9 +100,9 @@ export default function LearningPage() {
         const count = 10;
         const topicStringsRaw: string = await LingoProMultimodal.getRecommendedTopics(modelHandle, Math.floor(Math.random() * 1000000), selectedLanguage, count);
         const topicStrings = topicStringsRaw
-          .slice(1, -1) // remove brackets
-          .split(",")   // split on commas
-          .map(item => item.trim()); // trim spaces
+          .slice(1, -1)
+          .split(",")
+          .map(item => item.trim());
 
         const previews: TopicPreview[] = await Promise.all(
           topicStrings.map(async (topic) => {
@@ -114,83 +114,97 @@ export default function LearningPage() {
             } as TopicPreview;
           })
         );
-
         setRecommendedTopics({
           priorityTopics: previews.slice(0, 3),
           otherTopics: previews.slice(3),
         });
-
       } catch (error: any) {
         console.error('Error fetching recommendations:', error);
         Alert.alert('Error', `Failed to get learning recommendations: ${error.message}`);
       } finally {
-        setIsLoadingContent(false); // End general loading
+        setIsLoadingContent(false);
       }
     };
     fetchRecommendations();
-  }, [isDbInitialized, selectedLanguage, isModelLoaded]);  // Re-fetch when language changes
+  }, [isDbInitialized, selectedLanguage, isModelLoaded]);
 
-  // --- Handle Generating Content ---
-  const handleGenerateContent = async () => {
-    if (!isDbInitialized) {
-      Alert.alert("Error", "Database not initialized. Cannot generate content.");
+  // --- HANDLE GENERATING CONTENT (MODIFIED) ---
+  const handleGenerateContent = useCallback(async (topicToGenerate: string) => {
+    if (!isDbInitialized || !modelHandle) {
+      Alert.alert("Error", "Database not initialized or model not loaded. Cannot generate content.");
       return;
     }
-    if (!customTopic && recommendedTopics.priorityTopics.length === 0 && recommendedTopics.otherTopics.length === 0) {
-      Alert.alert("Missing Topic", "Please select or enter a topic to generate content.");
-      return;
-    }
-
-    const topicToUse = customTopic || recommendedTopics.priorityTopics[0]?.topic || recommendedTopics.otherTopics[0]?.topic;
     const count = parseInt(numberOfCards, 10);
-
-    if (!topicToUse || isNaN(count) || count < 1 || count > 20) {
+    if (!topicToGenerate || isNaN(count) || count < 1 || count > 20) {
       Alert.alert("Invalid Input", "Please select or enter a valid topic and number of cards (1-20).");
       return;
     }
 
     setIsLoadingContent(true);
 
+    // Create a new AbortController for this specific request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const result = await LingoProMultimodal.generateTopicCards({
         handle: modelHandle,
         requestId: Math.floor(Math.random() * 1000000),
-        topic: topicToUse,
+        topic: topicToGenerate,
         language: selectedLanguage,
         count: count,
-        deckLevel: "a1"
+        deckLevel: "a1",
+        // Pass the signal to the API call for cancellation
+        signal: controller.signal,
       });
 
+      // Clear the controller reference after a successful call
+      abortControllerRef.current = null;
 
       const wordsForDisplay: Word[] = result.cards.map((card: any) => ({
         id: card.wordId,
         language: selectedLanguage,
-        word: card.word || "Generated Word", // Assuming 'word' might be available in SrsCard JSON
-        meaning: card.meaning || "Generated Meaning", // Assuming 'meaning' might be available
+        word: card.word || "Generated Word",
+        meaning: card.meaning || "Generated Meaning",
         writing: card.writing || card.word || "Generated Word",
         wordType: card.wordType || "unknown",
-        category1: topicToUse,
+        category1: topicToGenerate,
         tags: card.tags || [],
       }));
 
-
-      // Navigate to GeneratedContentPage, passing data as params
       router.navigate({
         pathname: '/LearningSystem/generated-content-page',
         params: {
-          generatedWords: JSON.stringify(wordsForDisplay), // Pass the words
+          generatedWords: JSON.stringify(wordsForDisplay),
           generatedStory: JSON.stringify({ original: result.content, translation: result.translation }),
         },
       });
 
     } catch (error: any) {
-      console.error('Error generating content:', error);
-      Alert.alert('Error', `Failed to generate content: ${error.message}`);
+      // Check if the error is due to cancellation
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted by user.');
+        // Do not show an alert for a canceled request
+      } else {
+        console.error('Error generating content:', error);
+        Alert.alert('Error', `Failed to generate content: ${error.message}`);
+      }
     } finally {
+      // Ensure loading state is turned off, even if there's an error or cancellation
       setIsLoadingContent(false);
+      abortControllerRef.current = null;
     }
-  };
+  }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage, router]);
 
+  // --- NEW FUNCTION TO HANDLE TOPIC SELECTION AND GENERATION ---
+  const handleSelectTopic = useCallback((topic: string) => {
+    if (isLoadingContent) return;
+    setSelectedTopic(topic);
+    setCustomTopic(topic);
+    handleGenerateContent(topic);
+  }, [isLoadingContent, handleGenerateContent]);
+
+  // --- RENDER COMPONENT ---
   return (
     <SafeAreaView style={styles.fullPageContainer}>
       <View style={styles.header}>
@@ -231,7 +245,11 @@ export default function LearningPage() {
               <View style={styles.topicSection}>
                 <Text style={styles.topicSectionTitle}>Priority Topics</Text>
                 {recommendedTopics.priorityTopics.map((item, index) => (
-                  <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
+                  <TouchableOpacity
+                    key={index}
+                    style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
+                    onPress={() => handleSelectTopic(item.topic)}
+                  >
                     <Text style={styles.topicButtonText}>{item.topic}</Text>
                     <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
                   </TouchableOpacity>
@@ -243,7 +261,11 @@ export default function LearningPage() {
               <View style={styles.topicSection}>
                 <Text style={styles.topicSectionTitle}>Other Topics</Text>
                 {recommendedTopics.otherTopics.map((item, index) => (
-                  <TouchableOpacity key={index} style={styles.topicButton} onPress={() => setCustomTopic(item.topic)}>
+                  <TouchableOpacity
+                    key={index}
+                    style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
+                    onPress={() => handleSelectTopic(item.topic)}
+                  >
                     <Text style={styles.topicButtonText}>{item.topic}</Text>
                     <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
                   </TouchableOpacity>
@@ -258,17 +280,20 @@ export default function LearningPage() {
                   style={styles.input}
                   placeholder="Custom Topic (e.g., 'Space Exploration')"
                   value={customTopic}
-                  onChangeText={setCustomTopic}
+                  onChangeText={(text) => {
+                    setCustomTopic(text);
+                    setSelectedTopic(null);
+                  }}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Number of cards (1-20)"
                   keyboardType="numeric"
                   value={numberOfCards}
-                  onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))} // Restrict to numbers
+                  onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))}
                   maxLength={2}
                 />
-                <TouchableOpacity style={styles.generateButton} onPress={handleGenerateContent} disabled={isLoadingContent || !isModelLoaded}>
+                <TouchableOpacity style={styles.generateButton} onPress={() => handleGenerateContent(customTopic)} disabled={isLoadingContent || !isModelLoaded}>
                   <Text style={styles.generateButtonText}>Generate Content</Text>
                 </TouchableOpacity>
               </View>
@@ -284,7 +309,7 @@ const styles = StyleSheet.create({
   fullPageContainer: {
     flex: 1,
     backgroundColor: '#f8f8f8',
-    paddingTop: 40, // Adjust for notch on iOS
+    paddingTop: 40,
   },
   header: {
     flexDirection: 'row',
@@ -301,7 +326,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   badgePlaceholder: {
-    width: 24, // Match back icon size for alignment
+    width: 24,
   },
   contentScrollView: {
     flex: 1,
@@ -312,7 +337,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: 200, // Ensure it takes up some space
+    minHeight: 200,
   },
   loadingText: {
     marginTop: 10,
@@ -348,6 +373,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 15,
     marginBottom: 10,
+  },
+  selectedTopicButton: {
+    backgroundColor: '#E0E7FF',
+    borderColor: '#6200EE',
+    borderWidth: 2,
   },
   topicButtonText: {
     fontSize: 16,

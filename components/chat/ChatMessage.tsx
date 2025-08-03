@@ -3,6 +3,7 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { ChatMessage as ChatMessageType } from './types';
 import Clipboard from '@react-native-clipboard/clipboard';
+import Markdown from 'react-native-markdown-display';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -129,7 +130,9 @@ export default function ChatMessage({
         ) : (
           <View style={styles.textContainer}>
             <Text selectable style={styles.messageText}>
-              {animatePerChar ? displayedText : message.text}
+                <Markdown>
+                    {animatePerChar ? displayedText : message.text}
+                </Markdown>
             </Text>
           </View>
         )}

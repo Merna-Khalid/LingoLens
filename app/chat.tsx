@@ -150,8 +150,10 @@ export default function ChatScreen() {
 
       const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
         if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
-          setAiThinking(false);
-          setIsStreamingMessage(true);
+          // setIsStreamingMessage(true);
+          // setAiThinking(false);
+          let needsThinkingUpdate = false;
+          let needsStreamingUpdate = false;
 
           let cleanText = '';
 
@@ -182,6 +184,8 @@ export default function ChatScreen() {
                 } else {
                   cleanText += char;
                 }
+                if (aiThinking) needsThinkingUpdate = true;
+                if (!isStreamingMessage) needsStreamingUpdate = true;
                 break;
 
               case 'SEEKING_CLOSE':
@@ -201,6 +205,8 @@ export default function ChatScreen() {
                 }
                 break;
             }
+            if (needsThinkingUpdate && aiThinking) setAiThinking(false);
+            if (needsStreamingUpdate && !iSStreamingMessage) setIsStreamingMessage(true);
           }
 
           // Update UI with new content
@@ -241,6 +247,7 @@ export default function ChatScreen() {
         timestamp: getTimestamp()
       }]);
     } finally {
+      await LingoProMultimodal.updateSummaries(buffer);
       setStreamedMessage(currentStreamedMessage => {
         if (currentStreamedMessage && currentStreamedMessage.text) {
           setMessages(prev => [...prev, currentStreamedMessage]);

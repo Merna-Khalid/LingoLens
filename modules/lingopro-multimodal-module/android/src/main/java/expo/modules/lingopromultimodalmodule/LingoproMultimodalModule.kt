@@ -73,11 +73,6 @@ class LingoproMultimodalModule : Module() {
         }
     }
 
-    public fun updateSummaries(sum: String, imageSum: String) {
-        modelHistoryContext = sum
-        imageHistorySummary = imageSum
-    }
-
     private fun copyFileToInternalStorageIfNeeded(modelName: String, context: Context): File {
         val outputFile = File(context.filesDir, modelName)
 
@@ -926,6 +921,19 @@ class LingoproMultimodalModule : Module() {
             job.invokeOnCompletion { activeJobs.remove(job) }
         }
 
+        AsyncFunction("updateSummaries") { rawResponse: String, promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val (aiContent, sumContent, imageContent, toolsContent) = extractPromptTags(rawResponse)
+                    modelHistoryContext = sumContent
+                    imageHistorySummary = imageContent
+                    promise.resolve(true)
+                } catch (e: Exception) {
+                    promise.reject("UPDATE_SUMMARIES_ERROR", e.message, e)
+                }
+            }
+        }
+
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean,  promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
@@ -933,13 +941,12 @@ class LingoproMultimodalModule : Module() {
                     val fixedSystemPrompt = """
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
+                        return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
-                        return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                         please don't forget the closing tag </Tools>
-                        All answers by you should contain the four tags (not nested inside each other)! Don't you dare put <ImageSum></ImageSum> inside <AI></AI> or make up some tags.
-                        
+                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools].
                         You are provided with the chat history between you and the user as the following (empty if new chat)
                     """.trimIndent()
 
@@ -1099,12 +1106,12 @@ class LingoproMultimodalModule : Module() {
                     val fixedSystemPrompt = """
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
+                        return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
-                        return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                         please don't forget the closing tags
-                        All answers by you should contain the four tags [ImageSum, sum, AI, Tools] (not nested inside each other)! Don't you dare put <ImageSum></ImageSum> inside <AI></AI> or make up some tags.
+                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools] (not nested inside each other)! Don't you dare put <ImageSum></ImageSum> inside <AI></AI> or make up some tags.
                         
                         You are provided with the chat history between you and the user as the following (empty if new chat)
                     """.trimIndent()
