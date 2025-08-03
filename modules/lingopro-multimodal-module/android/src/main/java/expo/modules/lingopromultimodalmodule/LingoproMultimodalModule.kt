@@ -42,9 +42,9 @@ class LingoproMultimodalModule : Module() {
 
     private val activeDownloads = mutableMapOf<String, Job>()
     private val dbHelper by lazy {
-        DatabaseHelper(appContext.reactContext!!)
+        val context = appContext.reactContext ?: throw IllegalStateException("React context is null")
+        DatabaseHelper.getInstance(context)
     }
-
     // Define these functions at class level, not in the definition block
     private fun createInferenceListener(modelHandle: Int): InferenceListener {
         return object : InferenceListener {
@@ -476,16 +476,29 @@ class LingoproMultimodalModule : Module() {
 
         AsyncFunction("initializeDatabase") { promise: Promise ->
             try {
-                dbHelper.forceInitializeDatabase()
-                promise.resolve(true)
+                val success = dbHelper.forceInitializeDatabase()
+                if (success) {
+                    promise.resolve(true)
+                } else {
+                    promise.reject(
+                        "DB_INIT_ERROR",
+                        "Failed to force initialize the database",
+                        Exception("Database initialization returned false")
+                    )
+                }
             } catch (e: Exception) {
-                promise.reject("DB_INIT_ERROR", e.message, e)
+                promise.reject(
+                    "DB_INIT_ERROR",
+                    "Failed to initialize database: ${e.message}",
+                    e
+                )
             }
         }
 
         AsyncFunction("isDatabaseInitialized") { promise: Promise ->
             try {
-                promise.resolve(dbHelper.isDatabaseInitialized())
+                val isInitialized = dbHelper.isDatabaseInitialized()
+                promise.resolve(isInitialized)
             } catch (e: Exception) {
                 promise.reject("DB_CHECK_ERROR", e.message, e)
             }
@@ -569,28 +582,63 @@ class LingoproMultimodalModule : Module() {
         // CRUD operations Cards
         AsyncFunction("addToSRS") { wordId: Long, deckLevel: String, promise: Promise ->
             try {
-                val card = dbHelper.addToSRS(wordId, "en", deckLevel) // Added default language
-                promise.resolve(cardToJson(card))
+                val card = dbHelper.addToSRS(wordId, "en", deckLevel)
+                card?.let {
+                    promise.resolve(cardToJson(it))
+                } ?: run {
+                    promise.reject(
+                        "SRS_ADD_FAILED",
+                        "Failed to create SRS card for word ID $wordId",
+                        Exception("Database returned null card")
+                    )
+                }
             } catch (e: Exception) {
-                promise.reject("SRS_ERROR", "Failed to add to SRS", e)
+                promise.reject(
+                    "SRS_ADD_ERROR",
+                    "Failed to add word $wordId to SRS: ${e.message}",
+                    e
+                )
             }
         }
 
-        AsyncFunction("getDueCards") { language: String, promise: Promise ->
+        AsyncFunction("getDueCards") { language: String, limit: Int, promise: Promise ->
             try {
-                promise.resolve(dbHelper.getDueCards(language).map { cardToJson(it) })
+                if (limit <= 0) {
+                    throw IllegalArgumentException("Limit must be a positive integer")
+                }
+                val dueCards = dbHelper.getDueCards(language, limit)
+                val jsonCards = JSONArray(dueCards.map { cardToJson(it) }).toString()
+                promise.resolve(jsonCards)
             } catch (e: Exception) {
-                promise.reject("SRS_ERROR", "Failed to get due cards", e)
+                promise.reject("FETCH_ERROR", "Failed to fetch due cards", e)
             }
         }
 
         AsyncFunction("logReview") { cardId: Long, quality: Int, promise: Promise ->
             try {
-                if (quality !in 0..5) throw IllegalArgumentException("Quality must be 0-5")
-                val updatedCard = dbHelper.logReview(cardId, quality)
-                promise.resolve(cardToJson(updatedCard))
+                require(quality in 0..5) { "Quality must be between 0-5" }
+
+                dbHelper.logReview(cardId, quality)?.let { updatedCard ->
+                    promise.resolve(cardToJson(updatedCard))
+                } ?: run {
+                    promise.reject(
+                        "REVIEW_UPDATE_FAILED",
+                        "Card $cardId not found or update failed",
+                        Exception("Null card returned")
+                    )
+                }
+            } catch (e: IllegalArgumentException) {
+                promise.reject(
+                    "REVIEW_INVALID_INPUT",
+                    "Invalid review quality: ${e.message}",
+                    e
+                )
             } catch (e: Exception) {
-                promise.reject("REVIEW_ERROR", "Failed to log review", e)
+                promise.reject(
+                    "REVIEW_ERROR",
+                    "Failed to log review for card $cardId: ${e.message ?: "Unknown error"}",
+                    e
+                )
             }
         }
 
@@ -946,7 +994,7 @@ class LingoproMultimodalModule : Module() {
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                         please don't forget the closing tag </Tools>
-                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools].
+                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools], do not nest any tag into the other.
                         You are provided with the chat history between you and the user as the following (empty if new chat)
                     """.trimIndent()
 
@@ -972,7 +1020,7 @@ class LingoproMultimodalModule : Module() {
                     // Prevent sending the same image to the model multiple times
                     if (imageHistoryPath != NO_IMAGE && imagePath == imageHistoryPath) {
                         // User re-submitted the same image
-                        imagePathSelected = NO_IMAGE
+                        imagePathSelected = ""
                     } else {
                         imagePathSelected = imagePath
                         imageHistoryPath = imagePath
@@ -1107,13 +1155,18 @@ class LingoproMultimodalModule : Module() {
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
                         return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
-                        if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        if you received an image return the description of the image in English in between <ImageSum></ImageSum> after you are done with the <AI></AI> tag, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                         please don't forget the closing tags
-                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools] (not nested inside each other)! Don't you dare put <ImageSum></ImageSum> inside <AI></AI> or make up some tags.
+                        All answers by you should be in between one of the four tags <AI></AI>, <ImageSum></ImageSum>, <sum></sum>, <Tools></Tools> (sequentially and not nested inside each other)!.
+                        Answer format ->
+                        <AI>your answer here</AI>
+                        <ImageSum> image desciption here.... </ImageSum>
+                        <sum>he said this, you said that as sumamry</sum>
+                        <Tools>[...]</Tools>
                         
-                        You are provided with the chat history between you and the user as the following (empty if new chat)
+                        BAD FORMAT -> <AI>your answer here <ImageSum>...</ImageSum></AI>
                     """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1138,7 +1191,7 @@ class LingoproMultimodalModule : Module() {
                     var imagePathSelected = imagePath
                     if (imageHistoryPath != NO_IMAGE && imagePath == imageHistoryPath) {
                         // User re-submitted the same image
-                        imagePathSelected = NO_IMAGE
+                        imagePathSelected = ""
                     } else {
                         imagePathSelected = imagePath
                         imageHistoryPath = imagePath

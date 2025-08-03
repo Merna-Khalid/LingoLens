@@ -10,6 +10,7 @@ interface MessageListProps {
   streamedMessage: ChatMessageType | null;
   isStreamingMessage?: boolean;
   aiThinking: boolean;
+  isSummarizing: boolean,
   onPlayVoiceMessage: (audioUri: string) => void;
   onPlayAiAudio: (text: string) => void;
   showSuggestions?: boolean;
@@ -26,6 +27,7 @@ export default React.memo(function MessageList({
   streamedMessage,
   isStreamingMessage,
   aiThinking,
+  isSummarizing,
   onPlayVoiceMessage,
   onPlayAiAudio,
   showSuggestions = false,
@@ -90,15 +92,15 @@ export default React.memo(function MessageList({
             />
           )}
 
-          {aiThinking && (
-            // Only show AI is thinking if there is no system message with text
-            !(messages.some(m => m.sender === 'system' && m.text && m.text.trim() !== '')) && (
-              <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
-                <ActivityIndicator size="small" color="#333" />
-                <Text style={styles.timestamp}>AI is thinking...</Text>
-              </View>
-            )
+          {!isStreamingMessage && (aiThinking || isSummarizing) && (
+            <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
+              <ActivityIndicator size="small" color="#333" />
+              <Text style={styles.timestamp}>
+                {aiThinking ? 'AI is thinking...' : 'AI is summarizing...'}
+              </Text>
+            </View>
           )}
+
         </ScrollView>
         {/* Suggestions absolute above input */}
         {showSuggestions && onSuggestionClick && (

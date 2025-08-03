@@ -151,7 +151,9 @@ export default function SRSSystem() {
 
       setIsLoading(true);
       try {
-        const cards: Card[] = await LingoProMultimodal.getDueCards(selectedLanguage);
+        // hard coded limit for now
+        const limit = 20
+        const cards: Card[] = await LingoProMultimodal.getDueCards(selectedLanguage, 20);
 
         if (!cards || cards.length === 0) {
           console.log('No due cards found. Navigating to learning page.');

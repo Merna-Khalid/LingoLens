@@ -47,6 +47,8 @@ export default function ChatScreen() {
   const [streamedMessage, setStreamedMessage] = useState<ChatMessageType | null>(null);
 
   const [aiThinking, setAiThinking] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [waveformHeights, setWaveformHeights] = useState<number[]>(Array(20).fill(5));
@@ -63,6 +65,10 @@ export default function ChatScreen() {
 
   const nextRequestIdRef = useRef(0);
   const streamingListenersRef = useRef<NativeModuleSubscription[]>([]);
+  // A ref to track if streaming has started for the current request
+  const hasStartedStreamingRef = useRef(false);
+  // A ref to store the full streamed text as it arrives
+  const streamedTextRef = useRef('');
 
   const initialPromptSentRef = useRef(false);
 
@@ -129,7 +135,14 @@ export default function ChatScreen() {
       return;
     }
 
-    setAiThinking(true);
+    setAiThinking(true);          // AI is thinking
+    setIsStreamingMessage(false); // Not yet streaming
+    setIsSummarizing(false);      // Not summarizing yet
+
+    hasStartedStreamingRef.current = false; // Reset the ref for a new request
+    streamedTextRef.current = ''; // Reset the text ref for a new request
+    let seenClosingAI = false;
+
     try {
       if (!modelHandle) throw new Error("modelHandle is null.");
 
@@ -148,17 +161,24 @@ export default function ChatScreen() {
       let aiTagCharsMatched = 0;
       let closeTagCharsMatched = 0;
 
+
       const partialSub = ExpoLlmMediapipe.addListener("onPartialResponse", (ev: PartialResponseEventPayload) => {
         if (ev.handle === modelHandle && ev.requestId === currentRequestId) {
-          // setIsStreamingMessage(true);
-          // setAiThinking(false);
-          let needsThinkingUpdate = false;
-          let needsStreamingUpdate = false;
+          // This check ensures we only transition states once per request
+          if (!hasStartedStreamingRef.current) {
+            setIsStreamingMessage(true);
+            setAiThinking(false);
+            hasStartedStreamingRef.current = true;
+          }
 
           let cleanText = '';
 
           for (const char of ev.response) {
             buffer += char;
+
+            if (seenClosingAI && !isSummarizing && !char.match(/\s/) && char !== '<') {
+                        setIsSummarizing(true);
+                      }
 
             // State machine logic
             switch (state) {
@@ -184,8 +204,6 @@ export default function ChatScreen() {
                 } else {
                   cleanText += char;
                 }
-                if (aiThinking) needsThinkingUpdate = true;
-                if (!isStreamingMessage) needsStreamingUpdate = true;
                 break;
 
               case 'SEEKING_CLOSE':
@@ -198,6 +216,7 @@ export default function ChatScreen() {
                 } else if (closeTagCharsMatched === 4 && char === '>') {
                   state = 'SEEKING_AI';
                   buffer = '';
+                  seenClosingAI = true;
                 } else {
                   cleanText += buffer;
                   buffer = '';
@@ -205,25 +224,17 @@ export default function ChatScreen() {
                 }
                 break;
             }
-            if (needsThinkingUpdate && aiThinking) setAiThinking(false);
-            if (needsStreamingUpdate && !iSStreamingMessage) setIsStreamingMessage(true);
           }
 
-          // Update UI with new content
-          setStreamedMessage(prev => {
-            if (!prev) {
-              return {
-                id: Date.now().toString(),
-                text: cleanText,
-                sender: 'system',
-                timestamp: getTimestamp()
-              };
-            }
-            const updated = {
-              ...prev,
-              text: prev.text + cleanText
-            };
-            return updated;
+          // Update the ref with the new text
+          streamedTextRef.current += cleanText;
+
+          // Update UI with the full content from the ref
+          setStreamedMessage({
+            id: Date.now().toString(),
+            text: streamedTextRef.current,
+            sender: 'system',
+            timestamp: getTimestamp()
           });
         }
       });
@@ -247,15 +258,22 @@ export default function ChatScreen() {
         timestamp: getTimestamp()
       }]);
     } finally {
-      await LingoProMultimodal.updateSummaries(buffer);
+      // Use the final buffered text for summarization
+      await LingoProMultimodal.updateSummaries(streamedTextRef.current);
+
+      // This is the final cleanup block that runs after the response is complete
       setStreamedMessage(currentStreamedMessage => {
         if (currentStreamedMessage && currentStreamedMessage.text) {
           setMessages(prev => [...prev, currentStreamedMessage]);
         }
         return null;
       });
+      // Reset the states for the next message
       setIsStreamingMessage(false);
       setAiThinking(false);
+      setIsSummarizing(false);
+
+      streamedTextRef.current = '';
     }
   }, [
     isModelLoaded,
@@ -481,6 +499,7 @@ export default function ChatScreen() {
           streamedMessage={streamedMessage}
           isStreamingMessage={iSStreamingMessage}
           aiThinking={aiThinking}
+          isSummarizing={isSummarizing}
           onPlayVoiceMessage={playVoiceMessage}
           onPlayAiAudio={playAiMessageAudio}
           showSuggestions={showSuggestions}
