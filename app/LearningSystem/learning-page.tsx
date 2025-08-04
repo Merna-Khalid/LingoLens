@@ -189,24 +189,42 @@ export default function LearningPage() {
              console.error('Generation promise caught an error:', e);
              return null;
            });
+          console.log('After generating topic cars');
 
            if (result === null || !result.cards) {
                Alert.alert("Error", "Failed to generate content. Please try again.");
                return;
            }
 
-          // The result.cards are already in the correct format now
-          const wordsForDisplay: Word[] = result.cards.map((card: any) => ({
-              id: card.id,
-              language: selectedLanguage,
-              word: card.word || "Generated Word",
-              meaning: card.meaning || "Generated Meaning",
-              writing: card.writing || card.word || "Generated Word",
-              wordType: card.wordType || "noun",
-              category1: topicToGenerate,
-              tags: card.tags || [],
-              phonetics: card.phonetics || "",
+            console.log('RAW RESULT:', JSON.stringify(result, null, 2));
+
+          const wordsForDisplay: Word[] = result.cards
+             .filter(card => {
+                 if (!card) {
+                     console.warn('Undefined card encountered');
+                     return false;
+                 }
+                 if (card.id === undefined) {
+                     console.warn('Card missing ID:', card);
+                     return false;
+                 }
+                 return true;
+             })
+             .map((card: any) => ({
+                 id: card.id,
+                 language: selectedLanguage,
+                 word: card.word || "Generated Word",
+                 meaning: card.meaning || "Generated Meaning",
+                 writing: card.writing || card.word || "Generated Word",
+                 wordType: card.wordType || "noun",
+                 category1: topicToGenerate,
+                 tags: card.tags || [],
+                 phonetics: card.phonetics || "",
           }));
+
+         if (wordsForDisplay.length !== result.cards.length) {
+             console.warn(`Filtered ${result.cards.length - wordsForDisplay.length} invalid cards`);
+         }
 
           // The story data is now directly in the result object
           const generatedStory = {
@@ -214,13 +232,13 @@ export default function LearningPage() {
               translation: result.translation,
           };
 
-          router.navigate({
-              pathname: '/LearningSystem/generated-content-page',
+           router.navigate({
+              pathname: 'LearningSystem/generated-content-page',
               params: {
                   generatedWords: JSON.stringify(wordsForDisplay),
                   generatedStory: JSON.stringify(generatedStory),
               },
-          });
+            });
 
       } catch (error) {
           if (error.name !== 'AbortError') {
@@ -230,6 +248,7 @@ export default function LearningPage() {
       } finally {
           setIsLoadingContent(false);
           abortControllerRef.current = null;
+
       }
   }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage]);
 

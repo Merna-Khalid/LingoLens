@@ -32,11 +32,16 @@ type Card = {
     deckLevel: string;
 };
 
+type DueCardWithWord = {
+    card: Card;
+    word: Word;
+};
+
 const LANGUAGE_KEY = 'lingopro_selected_language';
 const LEVEL_KEY = 'lingopro_selected_level';
 const PROGRESS_KEY = 'lingopro_language_progress';
 
-export default function SRSSystem() {
+export default function App() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
@@ -136,20 +141,20 @@ export default function SRSSystem() {
         setIsLoading(true);
         try {
             const limit = 20;
-            const cards: Card[] = await LingoProMultimodal.getDueCards(selectedLanguage, limit);
+            const dueCardsWithWordsJson = await LingoProMultimodal.getDueCards(selectedLanguage, limit);
+            const dueCardsWithWords: DueCardWithWord[] = JSON.parse(dueCardsWithWordsJson);
 
-            if (!cards || cards.length === 0) {
+            if (!dueCardsWithWords || dueCardsWithWords.length === 0) {
                 setDueCardsCount(0);
                 setCurrentCard(null);
                 setCurrentWord(null);
                 console.log("No due cards found.");
             } else {
-                setDueCardsCount(cards.length);
-                const card = cards[0];
-                setCurrentCard(card);
-                const word: Word | null = await LingoProMultimodal.getWordById(card.wordId);
-                setCurrentWord(word);
-                console.log("Fetched new card and word:", word);
+                setDueCardsCount(dueCardsWithWords.length);
+                const firstDueCard = dueCardsWithWords[0];
+                setCurrentCard(firstDueCard.card);
+                setCurrentWord(firstDueCard.word);
+                console.log("Fetched new card and word:", firstDueCard.word);
             }
 
         } catch (error) {
@@ -159,15 +164,12 @@ export default function SRSSystem() {
             setCurrentCard(null);
             setCurrentWord(null);
         } finally {
-            // It's important to always reset the flip state when fetching new cards.
             setIsCardFlipped(false);
             setIsLoading(false);
         }
     };
 
     const handleLogReview = async (quality: number) => {
-        // This is a crucial guard to prevent the function from running with a null card.
-        // Your code already had this, which is great.
         if (!currentCard) {
             console.warn("Attempted to log review with no active card.");
             return;
@@ -288,7 +290,6 @@ export default function SRSSystem() {
                 <TouchableOpacity
                     style={[styles.flashcardContainer, cardDisabled && styles.flashcardContainerDisabled]}
                     onPress={() => {
-                        // CRUCIAL FIX: Only allow the card to be flipped if there is a word to show.
                         if (currentWord) {
                             setIsCardFlipped(!isCardFlipped);
                         }
@@ -314,7 +315,6 @@ export default function SRSSystem() {
             )}
 
             {/* Spaced Repetition Buttons */}
-            {/* The buttons are only rendered when there is a card AND it's flipped. */}
             {currentCard && isCardFlipped && (
                 <View style={styles.repetitionButtonsContainer}>
                     <TouchableOpacity style={[styles.repetitionButton, styles.againButton]} onPress={() => handleLogReview(0)} disabled={isLoading}>
@@ -487,7 +487,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: 20,
         paddingVertical: 15,
-        // borderBottomWidth: 1,
         borderBottomColor: '#eee',
     },
     headerTitle: {
@@ -548,7 +547,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: 180,
-        maxHeight: 250, // Limit height to prevent overlap
+        maxHeight: 250,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,

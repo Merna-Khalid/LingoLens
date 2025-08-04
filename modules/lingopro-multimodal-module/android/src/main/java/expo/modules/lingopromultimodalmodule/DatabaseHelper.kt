@@ -40,6 +40,11 @@ data class SrsCard(
     val deckLevel: String
 )
 
+data class DueCardWithWord(
+    val card: SrsCard,
+    val word: Word
+)
+
 data class SrsReview(
     val id: Long,
     val cardId: Long,
@@ -646,19 +651,43 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun getDueCards(language: String, limit: Int): List<SrsCard> = safeDatabaseRead { db ->
+    fun getDueCards(language: String, limit: Int): List<DueCardWithWord> = safeDatabaseRead { db ->
         val query = """
-            SELECT * FROM $TABLE_SRS_CARDS
-            WHERE $COLUMN_LANGUAGE = ?
-            AND $COLUMN_DUE_DATE <= datetime('now')
-            ORDER BY $COLUMN_DUE_DATE ASC
-            LIMIT ?
-        """.trimIndent()
+        SELECT
+            c.$COLUMN_CARD_ID as card_id,
+            c.$COLUMN_WORD_ID,
+            c.$COLUMN_LANGUAGE,
+            c.$COLUMN_DUE_DATE,
+            c.$COLUMN_INTERVAL,
+            c.$COLUMN_REPETITIONS,
+            c.$COLUMN_EASE_FACTOR,
+            c.$COLUMN_IS_BURIED,
+            c.$COLUMN_DECK_LEVEL,
+            w.$COLUMN_ID as word_id,
+            w.$COLUMN_LANGUAGE as word_language,
+            w.$COLUMN_WORD,
+            w.$COLUMN_MEANING,
+            w.$COLUMN_WRITING,
+            w.$COLUMN_WORD_TYPE,
+            w.$COLUMN_CATEGORY_1,
+            w.$COLUMN_CATEGORY_2,
+            w.$COLUMN_PHONETICS,
+            w.$COLUMN_TAGS
+        FROM $TABLE_SRS_CARDS c
+        INNER JOIN $TABLE_WORDS w ON c.$COLUMN_WORD_ID = w.$COLUMN_ID
+        WHERE c.$COLUMN_LANGUAGE = ?
+        AND c.$COLUMN_DUE_DATE <= datetime('now')
+        ORDER BY c.$COLUMN_DUE_DATE ASC
+        LIMIT ?
+    """.trimIndent()
         db.rawQuery(query, arrayOf(language, limit.toString())).use { cursor ->
-            cursor.mapToList { parseSrsCardFromCursor(it) }
+            cursor.mapToList {
+                val srsCard = parseSrsCardFromCursor(it)
+                val word = parseWordFromCursor(it)
+                DueCardWithWord(srsCard, word)
+            }
         }
     } ?: emptyList()
-
 
     // --- Analytics and Learning Module Operations ---
     // This function was missing and has been re-added.

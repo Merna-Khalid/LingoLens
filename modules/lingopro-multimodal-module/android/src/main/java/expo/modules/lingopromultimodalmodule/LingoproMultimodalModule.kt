@@ -208,6 +208,13 @@ class LingoproMultimodalModule : Module() {
         }
     }
 
+    private fun dueCardWithWordToJson(combinedData: DueCardWithWord): JSONObject {
+        return JSONObject().apply {
+            put("card", cardToJson(combinedData.card))
+            put("word", wordToJson(combinedData.word))
+        }
+    }
+
     // ---------------------------- DATABASE TOOLS ---------------------------------------------
     private fun createToolDefinition(
         name: String,
@@ -311,11 +318,42 @@ class LingoproMultimodalModule : Module() {
 
     // Tool definitions (model-friendly format)
     private val availableTools = listOf(
+//        createToolDefinition(
+//            name = "insertWord",
+//            description = "Save a single word to the database",
+//            properties = wordProperties,
+//            required = requiredWordFields
+//        ),
         createToolDefinition(
-            name = "insertWord",
-            description = "Save a single word to the database",
-            properties = wordProperties,
-            required = requiredWordFields
+            name = "bulkInsertWords",
+            description = "Save one or more words to the database as SRS cards. The words will be added to the 'default' deck.",
+            // The parameters for this tool is an array of word objects
+            properties = JSONObject().apply {
+                put("words", JSONObject().apply {
+                    put("type", "array")
+                    put("description", "An array of word objects to insert.")
+                    put("items", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("language", JSONObject().apply { put("type", "string") })
+                            put("word", JSONObject().apply { put("type", "string") })
+                            put("meaning", JSONObject().apply { put("type", "string") })
+                            put("writing", JSONObject().apply { put("type", "string") })
+                            put("wordType", JSONObject().apply { put("type", "string") })
+                            put("category1", JSONObject().apply { put("type", "string") })
+                            put("category2", JSONObject().apply { put("type", "string") })
+                            put("phonetics", JSONObject().apply { put("type", "string") })
+                            put("tags", JSONObject().apply {
+                                put("type", "array")
+                                put("items", JSONObject().apply { put("type", "string") })
+                            })
+                        })
+                        // All fields are required for a proper word object
+                        put("required", listOf("language", "word", "meaning", "writing", "wordType", "category1"))
+                    })
+                })
+            },
+            required = listOf("words")
         ),
         createToolDefinition(
             name = "getWordsByLanguage",
@@ -688,9 +726,15 @@ class LingoproMultimodalModule : Module() {
                 if (limit <= 0) {
                     throw IllegalArgumentException("Limit must be a positive integer")
                 }
-                val dueCards = dbHelper.getDueCards(language, limit)
-                val jsonCards = JSONArray(dueCards.map { cardToJson(it) }).toString()
-                promise.resolve(jsonCards)
+                // Fetch the list of combined card and word objects
+                val dueCardsWithWords = dbHelper.getDueCards(language, limit)
+
+                // Serialize the list of combined objects to a JSON array
+                val jsonCardsWithWords = JSONArray(dueCardsWithWords.map { combinedData ->
+                    dueCardWithWordToJson(combinedData)
+                }).toString()
+
+                promise.resolve(jsonCardsWithWords)
             } catch (e: Exception) {
                 promise.reject("FETCH_ERROR", "Failed to fetch due cards", e)
             }

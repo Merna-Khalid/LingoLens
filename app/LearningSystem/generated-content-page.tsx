@@ -1,21 +1,9 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView, Modal } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView, Modal, Alert } from 'react-native';
 import { AntDesign, Ionicons } from '@expo/vector-icons';
-import { StackScreenProps } from '@react-navigation/stack';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
-// Define types for the route parameters
-type RootStackParamList = {
-  GeneratedContent: {
-    generatedWords: Word[];
-    generatedStory: { original: string; translation: string };
-  };
-  SRSSystem: undefined;
-  'main-page': undefined;
-};
-
-type GeneratedContentPageProps = StackScreenProps<RootStackParamList, 'GeneratedContent'>;
-
-// Define a type for a Word object
+// Define types
 type Word = {
   id: number;
   language: string;
@@ -29,25 +17,61 @@ type Word = {
   tags: string[];
 };
 
-export default function GeneratedContentPage({ route, navigation }: GeneratedContentPageProps) {
-  const { generatedWords, generatedStory } = route.params;
+type Story = {
+  original: string;
+  translation: string;
+};
 
-  // State to manage the modal visibility and the word to display
+export default function GeneratedContentPage() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+
+  // Parse parameters with proper type safety
+  const [generatedWords, setGeneratedWords] = useState<Word[]>([]);
+  const [generatedStory, setGeneratedStory] = useState<Story>({
+    original: "",
+    translation: ""
+  });
+
+  // Initialize data from params - fixed version
+  React.useEffect(() => {
+    try {
+      if (params.generatedWords) {
+        const words = typeof params.generatedWords === 'string'
+          ? JSON.parse(params.generatedWords)
+          : params.generatedWords;
+        setGeneratedWords(Array.isArray(words) ? words : []);
+      }
+
+      if (params.generatedStory) {
+        const story = typeof params.generatedStory === 'string'
+          ? JSON.parse(params.generatedStory)
+          : params.generatedStory;
+        setGeneratedStory(story || { original: "", translation: "" });
+      }
+    } catch (e) {
+      console.error("Failed to parse navigation params:", e);
+    }
+  }, []);
+
+  // State for modal
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedWord, setSelectedWord] = useState<Word | null>(null);
 
-  // A helper to create a Set for fast lookup of generated words
-  const generatedWordsMap = new Map(generatedWords.map(w => [w.word.toLowerCase(), w]));
+  // Word map for quick lookup
+  const generatedWordsMap = React.useMemo(() => {
+    return new Map(generatedWords.map(w => [w.word.toLowerCase(), w]));
+  }, [generatedWords]);
 
-  // Function to handle tapping a word
+  // Handle word press
   const handleWordPress = (word: Word) => {
     setSelectedWord(word);
     setModalVisible(true);
   };
 
-  // Function to render the story with tappable words
-  const renderStory = (storyText: string, words: Word[]) => {
-    const storyWords = storyText.split(/(\s+)/); // Split by whitespace to preserve it
+  // Render story with tappable words
+  const renderStory = (storyText: string) => {
+    const storyWords = storyText.split(/(\s+)/);
     return (
       <Text style={styles.storyText}>
         {storyWords.map((part, index) => {
@@ -67,12 +91,10 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
     );
   };
 
-  // Placeholder for audio playback logic
+  // Audio playback
   const handlePlayAudio = () => {
     if (selectedWord) {
-      console.log(`Playing audio for: ${selectedWord.word}`);
-      // TODO: Implement actual audio playback here, e.g., using a TTS API or pre-recorded audio.
-      // Example: PlayAudio(selectedWord.word, selectedWord.language);
+      Alert.alert("Play Audio", `Playing audio for: ${selectedWord.word}`);
     }
   };
 
@@ -80,7 +102,7 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <AntDesign name="arrowleft" size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Generated Content</Text>
@@ -88,24 +110,28 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
       </View>
 
       <ScrollView style={styles.contentScrollView}>
-        {/* Generated Story Block */}
+        {/* Story Section */}
         <Text style={styles.sectionTitle}>Contextual Story</Text>
-        {generatedStory && generatedStory.original ? (
+        {generatedStory.original ? (
           <View style={styles.contentBlock}>
             <Text style={styles.contentLabel}>Original:</Text>
-            {renderStory(generatedStory.original, generatedWords)}
+            {renderStory(generatedStory.original)}
             <Text style={styles.contentLabel}>Translation:</Text>
             <Text style={styles.storyText}>{generatedStory.translation}</Text>
           </View>
         ) : (
-          <Text style={styles.noContentText}>No story generated for this content.</Text>
+          <Text style={styles.noContentText}>No story generated.</Text>
         )}
 
-        {/* Word List Block */}
+        {/* Words Section */}
         <Text style={styles.sectionTitle}>Vocabulary Words</Text>
         {generatedWords.length > 0 ? (
           generatedWords.map((word, index) => (
-            <TouchableOpacity key={index} style={styles.generatedWordItem} onPress={() => handleWordPress(word)}>
+            <TouchableOpacity
+              key={index}
+              style={styles.generatedWordItem}
+              onPress={() => handleWordPress(word)}
+            >
               <View style={styles.wordItemContent}>
                 <Text style={styles.wordMainText}>
                   <Text style={styles.wordBold}>{word.word}</Text>
@@ -116,17 +142,13 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
             </TouchableOpacity>
           ))
         ) : (
-          <Text style={styles.noContentText}>No words generated for this content.</Text>
+          <Text style={styles.noContentText}>No words generated.</Text>
         )}
 
         {/* Action Button */}
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => {
-            // TODO: Implement logic to add generatedWords to flashcards
-            console.log('Adding words to flashcards...');
-            navigation.navigate('main-page');
-          }}
+          onPress={() => router.navigate('main-page')}
         >
           <Text style={styles.addButtonText}>Add to Flashcards</Text>
         </TouchableOpacity>
@@ -148,7 +170,9 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
             {selectedWord && (
               <View style={styles.modalBody}>
                 <Text style={styles.modalWord}>{selectedWord.word}</Text>
-                <Text style={styles.modalPhonetics}>{selectedWord.phonetics}</Text>
+                {selectedWord.phonetics && (
+                  <Text style={styles.modalPhonetics}>{selectedWord.phonetics}</Text>
+                )}
 
                 <View style={styles.audioButtonContainer}>
                   <TouchableOpacity style={styles.audioButton} onPress={handlePlayAudio}>
@@ -165,7 +189,7 @@ export default function GeneratedContentPage({ route, navigation }: GeneratedCon
                   <Text style={styles.wordDetailLabel}>Word Type:</Text>
                   <Text style={styles.wordDetailValue}>{selectedWord.wordType}</Text>
                 </View>
-                {selectedWord.tags && selectedWord.tags.length > 0 && (
+                {selectedWord.tags?.length > 0 && (
                   <View style={styles.wordDetailRow}>
                     <Text style={styles.wordDetailLabel}>Tags:</Text>
                     <Text style={styles.wordDetailValue}>{selectedWord.tags.join(', ')}</Text>
@@ -234,6 +258,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 28,
     color: '#333',
+    marginBottom: 15,
   },
   highlightedWord: {
     fontWeight: 'bold',
