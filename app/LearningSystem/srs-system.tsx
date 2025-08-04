@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
 
@@ -37,6 +38,7 @@ const PROGRESS_KEY = 'lingopro_language_progress';
 
 export default function SRSSystem() {
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     const [isDbInitialized, setIsDbInitialized] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -250,7 +252,7 @@ export default function SRSSystem() {
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 15 }]}>
                 <TouchableOpacity onPress={() => router.back()}>
                     <AntDesign name="arrowleft" size={24} color="#333" />
                 </TouchableOpacity>
@@ -367,7 +369,7 @@ export default function SRSSystem() {
             </View>
 
             {/* Bottom Navigation */}
-            <View style={styles.bottomNavigation}>
+            <View style={[styles.bottomNavigation, { paddingBottom: insets.bottom + 10 }]}>
                 <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('srs-system')}>
                     <MaterialCommunityIcons name="cards-outline" size={24} color="#6200EE" />
                     <Text style={[styles.navText, { color: '#6200EE' }]}>Decks</Text>
@@ -478,7 +480,6 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#f8f8f8',
-        paddingTop: 40,
     },
     header: {
         flexDirection: 'row',
@@ -486,7 +487,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: 20,
         paddingVertical: 15,
-        borderBottomWidth: 1,
+        // borderBottomWidth: 1,
         borderBottomColor: '#eee',
     },
     headerTitle: {
@@ -547,12 +548,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: 180,
+        maxHeight: 250, // Limit height to prevent overlap
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 8,
         elevation: 5,
-        flex: 1,
         marginBottom: 20,
     },
     flashcardContainerDisabled: {
@@ -701,6 +702,11 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 5,
     },
     navItem: {
         alignItems: 'center',
