@@ -13,6 +13,7 @@ import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
+import android.database.DatabaseUtils
 
 data class Word(
     val id: Long,
@@ -46,6 +47,13 @@ data class SrsReview(
     val quality: Int
 )
 
+data class ReviewStat(
+    val date: String,
+    val count: Int,
+    val avgEase: Double,
+    val avgInterval: Double
+)
+
 class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     context.applicationContext,
     DATABASE_NAME,
@@ -56,7 +64,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         private const val TAG = "DatabaseHelper"
         private const val DATABASE_NAME = "LangLearning.db"
         private const val DATABASE_VERSION = 2
-        private const val INITIAL_INTERVAL = 1
+        private const val INITIAL_INTERVAL = 0
 
         @Volatile
         private var instance: DatabaseHelper? = null
@@ -155,6 +163,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
                 FOREIGN KEY ($COLUMN_CARD_ID) REFERENCES $TABLE_SRS_CARDS($COLUMN_CARD_ID) ON DELETE CASCADE
             )
         """.trimIndent()
+
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -318,22 +327,40 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     fun bulkInsertCards(
         words: List<Word>,
         deckLevel: String
-    ): List<SrsCard> = withTransaction { db ->
+    ): List<SrsCard> = withTransaction<List<SrsCard>> { db ->
         words.mapNotNull { wordData ->
-            val wordValues = ContentValues().apply {
-                put(COLUMN_LANGUAGE, wordData.language)
-                put(COLUMN_WORD, wordData.word)
-                put(COLUMN_MEANING, wordData.meaning)
-                put(COLUMN_WRITING, wordData.writing)
-                put(COLUMN_WORD_TYPE, wordData.wordType)
-                put(COLUMN_CATEGORY_1, wordData.category1)
-                put(COLUMN_CATEGORY_2, wordData.category2)
-                put(COLUMN_PHONETICS, wordData.phonetics)
-                put(COLUMN_TAGS, JSONArray(wordData.tags).toString())
-            }
-            val wordId = db.insert(TABLE_WORDS, null, wordValues)
+            try {
+                Log.d(TAG, "Processing word: ${wordData.word}")
 
-            if (wordId != -1L) {
+                // 1. Insert Word
+                val wordValues = ContentValues().apply {
+                    put(COLUMN_LANGUAGE, wordData.language)
+                    put(COLUMN_WORD, wordData.word)
+                    put(COLUMN_MEANING, wordData.meaning)
+                    put(COLUMN_WRITING, wordData.writing)
+                    put(COLUMN_WORD_TYPE, wordData.wordType)
+                    put(COLUMN_CATEGORY_1, wordData.category1)
+                    put(COLUMN_CATEGORY_2, wordData.category2 ?: "")
+                    put(COLUMN_PHONETICS, wordData.phonetics ?: "")
+                    put(COLUMN_TAGS, try {
+                        JSONArray(wordData.tags ?: emptyList<String>()).toString()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to serialize tags for ${wordData.word}", e)
+                        "[]"
+                    })
+                }
+
+                val wordId = db.insert(TABLE_WORDS, null, wordValues).also { id ->
+                    if (id == -1L) Log.e(TAG, "FAILED to insert word: ${wordData.word}")
+                    else Log.d(TAG, "Inserted word ID: $id")
+                }
+
+                if (wordId == -1L) {
+                    Log.e(TAG, "Word insertion failed - skipping card")
+                    return@mapNotNull null
+                }
+
+                // 2. Insert Card
                 val cardValues = ContentValues().apply {
                     put(COLUMN_WORD_ID, wordId)
                     put(COLUMN_LANGUAGE, wordData.language)
@@ -342,18 +369,36 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
                     put(COLUMN_EASE_FACTOR, 2.5f)
                     put(COLUMN_DECK_LEVEL, deckLevel)
                 }
-                val cardId = db.insert(TABLE_SRS_CARDS, null, cardValues)
 
-                if (cardId != -1L) {
-                    getCard(db, cardId)
-                } else {
+                val cardId = db.insert(TABLE_SRS_CARDS, null, cardValues).also { id ->
+                    if (id == -1L) Log.e(TAG, "FAILED to insert card for word $wordId")
+                    else Log.d(TAG, "Inserted card ID: $id")
+                }
+
+                if (cardId == -1L) {
+                    // Clean up orphaned word
+                    db.delete(TABLE_WORDS, "$COLUMN_ID=?", arrayOf(wordId.toString()))
+                    Log.e(TAG, "Card insertion failed - deleted word $wordId")
+                    return@mapNotNull null
+                }
+
+                // 3. Retrieve full card
+                getCard(db, cardId)?.also { card ->
+                    Log.d(TAG, "Successfully created card ${card.id} for ${wordData.word}")
+                } ?: run {
+                    Log.e(TAG, "Failed to retrieve created card $cardId")
                     null
                 }
-            } else {
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception processing ${wordData.word}", e)
                 null
             }
+        }.also { results ->
+            Log.d(TAG, "Bulk insert completed. Success: ${results.size}/${words.size}")
         }
-    } ?: emptyList()
+    } ?: emptyList<SrsCard>().also {
+        Log.e(TAG, "Transaction failed entirely!")
+    }
 
     fun generateContextualContent(words: List<String>, language: String, topic: String): Pair<String, String> {
         return Pair(
@@ -377,6 +422,66 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             null, null, "$COLUMN_TIMESTAMP DESC"
         ).use { cursor ->
             cursor.mapToList { parseWordFromCursor(it) }
+        }
+    } ?: emptyList()
+
+    fun getCardsByDeckLevel(deckLevel: String): List<SrsCard> = safeDatabaseRead { db ->
+        db.query(
+            TABLE_SRS_CARDS,
+            null,
+            "$COLUMN_DECK_LEVEL = ?",
+            arrayOf(deckLevel),
+            null, null, "$COLUMN_DUE_DATE ASC"
+        ).use { cursor ->
+            cursor.mapToList { parseSrsCardFromCursor(it) }
+        }
+    } ?: emptyList()
+
+    // DatabaseHelper.kt
+    fun getDistinctDeckLevels(): List<String> = safeDatabaseRead { db ->
+        db.query(
+            true,
+            TABLE_SRS_CARDS,
+            arrayOf(COLUMN_DECK_LEVEL),
+            null, null, null, null,
+            null, null
+        ).use { cursor ->
+            mutableListOf<String>().apply {
+                while (cursor.moveToNext()) {
+                    add(cursor.getString(0))
+                }
+            }.distinct()
+        }
+    } ?: emptyList()
+
+    fun getTotalCardCount(): Long = safeDatabaseRead { db ->
+        DatabaseUtils.queryNumEntries(db, TABLE_SRS_CARDS)
+    } ?: 0
+
+    fun getReviewStats(days: Int = 30): List<ReviewStat> = safeDatabaseRead { db ->
+        val timeThreshold = System.currentTimeMillis() - (days * 24L * 60 * 60 * 1000)
+
+        // Join with SRS cards table to get interval and ease factor
+        db.rawQuery("""
+        SELECT 
+            date(r.$COLUMN_REVIEW_DATE/1000, 'unixepoch') as day, 
+            COUNT(*) as review_count,
+            AVG(c.$COLUMN_EASE_FACTOR) as avg_ease,
+            AVG(c.$COLUMN_INTERVAL) as avg_interval
+        FROM $TABLE_SRS_REVIEWS r
+        JOIN $TABLE_SRS_CARDS c ON r.$COLUMN_CARD_ID = c.$COLUMN_CARD_ID
+        WHERE r.$COLUMN_REVIEW_DATE >= ?
+        GROUP BY day
+        ORDER BY day DESC
+    """, arrayOf(timeThreshold.toString())).use { cursor ->
+            cursor.mapToList {
+                ReviewStat(
+                    date = it.getString(it.getColumnIndex("day")),
+                    count = it.getInt(it.getColumnIndex("review_count")),
+                    avgEase = it.getDouble(it.getColumnIndex("avg_ease")),
+                    avgInterval = it.getDouble(it.getColumnIndex("avg_interval"))
+                )
+            }
         }
     } ?: emptyList()
 

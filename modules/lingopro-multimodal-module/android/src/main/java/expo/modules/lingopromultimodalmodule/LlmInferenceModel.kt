@@ -394,31 +394,49 @@ class LlmInferenceModel(
      */
     suspend fun close() {
         Log.d("LlmInferenceModel", "Closing LlmInferenceModel resources.")
+
         try {
-            currentJob?.cancel()
-            currentJob = null
-
-            inferenceListener?.logging(this, "Closing model...")
-
-            withTimeoutOrNull(5000) { // optional timeout
-                while (isModelRunning) {
-                    delay(100)
+            // Cancel and await current job
+            currentJob?.let { job ->
+                job.cancel(CancellationException("Model closing requested"))
+                try {
+                    job.join() // Wait for the job to actually complete
+                    inferenceListener?.logging(this, "Inference job cancelled and joined.")
+                } catch (e: CancellationException) {
+                    Log.d("LlmInferenceModel", "Job was cancelled normally.")
+                } catch (e: Exception) {
+                    Log.e("LlmInferenceModel", "Error waiting for job to finish: ${e.message}", e)
                 }
             }
+            currentJob = null
 
-            llmInferenceSession?.let {
-                it.close()
-                inferenceListener?.logging(this, "Session closed")
+            // Wait until model actually finishes, if you're tracking this manually
+            while (isModelRunning) {
+                Log.d("LlmInferenceModel", "Waiting for model to stop...")
+                delay(100)
             }
 
-            llmInference?.let {
-                it.close()
-                inferenceListener?.logging(this, "Inference closed")
+            // Close the session
+            try {
+                llmInferenceSession?.close()
+                inferenceListener?.logging(this, "Session closed.")
+            } catch (e: Exception) {
+                Log.e("LlmInferenceModel", "Error closing session", e)
+            }
+
+            // Close the inference engine
+            try {
+                llmInference?.close()
+                inferenceListener?.logging(this, "Inference closed.")
+            } catch (e: Exception) {
+                Log.e("LlmInferenceModel", "Error closing inference", e)
             }
 
         } catch (e: Exception) {
-            Log.e("LlmInferenceModel", "Error closing resources: ${e.message}", e)
-            inferenceListener?.logging(this, "Error closing resources: ${e.message}")
+            Log.e("LlmInferenceModel", "Error during close: ${e.message}", e)
+            inferenceListener?.logging(this, "Error during close: ${e.message}")
+        } finally {
+            currentJob = null
         }
     }
 }

@@ -34,6 +34,7 @@ class LingoproMultimodalModule : Module() {
     private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var activeJobs: MutableList<Job> = mutableListOf()
     private var activeModelHandle: Int? = null
+    private val releasedHandles = mutableSetOf<Int>()
 
     private var nextHandle = 1
     private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
@@ -339,14 +340,11 @@ class LingoproMultimodalModule : Module() {
         return tools.mapIndexed { index, tool ->
             val name = tool.optString("name", "unknown")
             val description = tool.optString("description", "No description")
-            val requiredArray = tool.optJSONArray("required")
-            val required = if (requiredArray != null) {
-                (0 until requiredArray.length()).joinToString(", ") { i ->
-                    requiredArray.optString(i, "")
-                }
-            } else {
-                "none"
-            }
+            val required = tool.optJSONArray("required")?.let { reqArray ->
+                (0 until reqArray.length()).joinToString(", ") { i ->
+                    reqArray.optString(i, "")
+                }.takeIf { it.isNotBlank() } ?: "none"
+            } ?: "none"
             "${index + 1}. $name - $description. Requires: $required"
         }.joinToString("\n")
     }
@@ -516,6 +514,32 @@ class LingoproMultimodalModule : Module() {
                 promise.resolve(isInitialized)
             } catch (e: Exception) {
                 promise.reject("DB_CHECK_ERROR", e.message, e)
+            }
+        }
+
+        // General stats function
+        AsyncFunction("fetchStats") { language: String, promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Get all unique deck levels using the new public function
+                    val deckLevels = dbHelper.getDistinctDeckLevels()
+
+                    // Build stats object
+                    val stats = mapOf(
+                        "wordsCount" to dbHelper.getWordsByLanguage(language).size,
+                        "cardsByDeckLevel" to deckLevels.associate { deckLevel ->
+                            deckLevel to dbHelper.getCardsByDeckLevel(deckLevel).size
+                        },
+                        "reviewsOverTime" to dbHelper.getReviewStats(),
+                        "totalCards" to dbHelper.getTotalCardCount()
+                    )
+
+                    // Convert to simple Map that React Native understands
+                    promise.resolve(stats)
+
+                } catch (e: Exception) {
+                    promise.reject("STATS_ERROR", "Failed to fetch stats: ${e.message}", e)
+                }
             }
         }
 
@@ -723,43 +747,48 @@ class LingoproMultimodalModule : Module() {
                         return@launch
                     }
 
-                    // A single prompt to generate both the words and the story
+                    // A single prompt to generate words, the story, and the story's translation
                     val combinedPrompt = """
-                Generate $count basic $language vocabulary words about the topic "$topic". Also, write a short, simple story or dialogue in $language that uses these words.
+        Generate $count basic $language vocabulary words about the topic "$topic". Also, write a short, simple story or dialogue in $language that uses these words.
 
-                Return the vocabulary as a JSON object inside <Json></Json> tags, and the story inside <Story></Story> tags.
+        Return the vocabulary as a JSON object inside <Json></Json> tags.
+        Return the story in $language inside <Story></Story> tags.
+        Return an English translation of the story inside <StoryTrans></StoryTrans> tags.
 
-                The JSON object should have a single key "words", which is an array of objects.
-                Each object must contain the keys: "word", "meaning", "phonetics", "writing", "wordType", and "tags".
-                
-                The story should be a few paragraphs long and use the generated vocabulary.
+        The JSON object should have a single key "words", which is an array of objects.
+        Each object must contain the keys: "word", "meaning", "phonetics", "writing", "wordType", and "tags".
+        
+        The story should be a few paragraphs long and use the generated vocabulary.
 
-                Example format:
-                <Json>
-                {
-                  "words": [
-                    {
-                      "word": "hallo",
-                      "meaning": "hello",
-                      "phonetics": "/ˈhalo/",
-                      "writing": "hallo",
-                      "wordType": "greeting",
-                      "tags": ["greeting", "beginner"]
-                    }
-                  ]
-                }
-                </Json>
-                <Story>
-                Guten Tag! Ich bin Anna und das ist mein Buch. Ich lese gern.
-                </Story>
-            """.trimIndent()
+        Example format:
+        <Json>
+        {
+          "words": [
+            {
+              "word": "hallo",
+              "meaning": "hello",
+              "phonetics": "/ˈhalo/",
+              "writing": "hallo",
+              "wordType": "greeting",
+              "tags": ["greeting", "beginner"]
+            }
+          ]
+        }
+        </Json>
+        <Story>
+        Guten Tag! Ich bin Anna und das ist mein Buch. Ich lese gern.
+        </Story>
+        <StoryTrans>
+        Good day! I am Anna and this is my book. I like to read.
+        </StoryTrans>
+    """.trimIndent()
 
                     val response = try {
                         val deferredResult = CompletableDeferred<String>()
                         model.generateResponse(requestId, combinedPrompt, "") { result ->
                             deferredResult.complete(result)
                         }
-                        withTimeout(200_000) { // Increased timeout for two-part generation
+                        withTimeout(500_000) { // Increased timeout for two-part generation
                             deferredResult.await()
                         }
                     } catch (e: TimeoutCancellationException) {
@@ -773,12 +802,16 @@ class LingoproMultimodalModule : Module() {
                     // Extract content using regex
                     val jsonRegex = "<Json>(.*?)</Json>".toRegex(RegexOption.DOT_MATCHES_ALL)
                     val storyRegex = "<Story>(.*?)</Story>".toRegex(RegexOption.DOT_MATCHES_ALL)
+                    val storyTransRegex = "<StoryTrans>(.*?)</StoryTrans>".toRegex(RegexOption.DOT_MATCHES_ALL)
 
                     val jsonMatch = jsonRegex.find(response)
                     val storyMatch = storyRegex.find(response)
+                    val storyTransMatch = storyTransRegex.find(response)
+                    Log.d(TAG, "📦 Fetched words : $jsonMatch")
 
                     val jsonContent = jsonMatch?.groupValues?.get(1)?.trim() ?: ""
                     val storyContent = storyMatch?.groupValues?.get(1)?.trim() ?: ""
+                    val storyTransContent = storyTransMatch?.groupValues?.get(1)?.trim() ?: ""
 
                     if (jsonContent.isEmpty() || storyContent.isEmpty()) {
                         promise.reject("PARSE_ERROR", "Failed to extract JSON or Story from response.", null)
@@ -789,66 +822,32 @@ class LingoproMultimodalModule : Module() {
                     val json = JSONObject(jsonContent)
                     val wordsArray = json.getJSONArray("words")
 
-                    val wordsToInsert = mutableListOf<Word>()
-                    for (i in 0 until wordsArray.length()) {
+                    val wordsToInsert = (0 until wordsArray.length()).map { i ->
                         val item = wordsArray.getJSONObject(i)
-                        val word = item.getString("word")
-                        val meaning = item.getString("meaning")
-                        val phonetics = item.optString("phonetics", null)
-                        val writing = item.optString("writing", word)
-                        val wordType = item.optString("wordType", "unknown")
-                        val tagsArray = item.optJSONArray("tags")
-
-                        val tags = if (tagsArray != null) {
-                            (0 until tagsArray.length()).map { tagsArray.getString(it) }
-                        } else {
-                            emptyList<String>()
-                        }
-
-                        wordsToInsert.add(Word(
+                        Word(
                             id = 0, // ID will be generated by the database
                             language = language,
-                            word = word,
-                            meaning = meaning,
-                            phonetics = phonetics,
-                            writing = writing,
-                            wordType = wordType,
+                            word = item.getString("word"),
+                            meaning = item.getString("meaning"),
+                            phonetics = item.optString("phonetics"),
+                            writing = item.optString("writing", item.getString("word")),
+                            wordType = item.optString("wordType", "unknown"),
                             category1 = topic,
                             category2 = null,
-                            tags = tags
-                        ))
+                            tags = item.optJSONArray("tags")?.let { tagsArray ->
+                                (0 until tagsArray.length()).map { tagsArray.getString(it) }
+                            } ?: emptyList()
+                        )
                     }
 
                     // Call the revised bulkInsertCards function
                     val cards = dbHelper.bulkInsertCards(wordsToInsert, deckLevel)
 
-                    // Step 2: Get a translation of the story
-                    val translationPrompt = """
-                Translate the following text into English. 
-                Text: "$storyContent"
-            """.trimIndent()
-
-                    val translationResponse = try {
-                        val deferredResult = CompletableDeferred<String>()
-                        model.generateResponse(requestId, translationPrompt, "") { result ->
-                            deferredResult.complete(result)
-                        }
-                        withTimeout(15_000) {
-                            deferredResult.await()
-                        }
-                    } catch (e: TimeoutCancellationException) {
-                        Log.w("LlmInference", "Story translation timed out, returning empty string.")
-                        ""
-                    } catch (e: Exception) {
-                        Log.e("LlmInference", "Story translation failed: ${e.message}", e)
-                        ""
-                    }
-
-                    // Resolve the promise with all the necessary data
+                    // Resolve the promise with all the necessary data, filtering out any null cards
                     promise.resolve(mapOf(
-                        "cards" to cards.map { cardToJson(it) },
+                        "cards" to cards.filter { it != null }.map { cardToJson(it) },
                         "content" to storyContent,
-                        "translation" to translationResponse.trim()
+                        "translation" to storyTransContent
                     ))
 
                 } catch (e: JSONException) {
@@ -858,6 +857,7 @@ class LingoproMultimodalModule : Module() {
                 }
             }
         }
+
 
 
         AsyncFunction("getRecommendedTopics") { handle: Int, requestId: Int, language: String, count: Int, promise: Promise ->
@@ -1102,10 +1102,19 @@ class LingoproMultimodalModule : Module() {
 
         AsyncFunction("releaseModel") { handle: Int, promise: Promise ->
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
+                if (releasedHandles.contains(handle)) {
+                    Log.w(TAG, "releaseModel: Model $handle already released.")
+                    withContext(Dispatchers.Main) {
+                        promise.resolve(false) // or reject if you want
+                    }
+                    return@launch
+                }
+
                 try {
                     val model = modelMap.remove(handle)
                     if (model != null) {
-                        model.close() // Close the underlying MediaPipe model
+                        releasedHandles.add(handle)
+                        model.close()
                         Log.d(TAG, "releaseModel: Model with handle $handle released.")
                         withContext(Dispatchers.Main) { promise.resolve(true) }
                         modelHistoryContext = ""
@@ -1113,16 +1122,22 @@ class LingoproMultimodalModule : Module() {
                         imageHistorySummary = ""
                     } else {
                         Log.w(TAG, "releaseModel: No model found for handle $handle to release.")
-                        withContext(Dispatchers.Main) { promise.reject("INVALID_HANDLE", "No model found for handle $handle", null) }
+                        withContext(Dispatchers.Main) {
+                            promise.reject("INVALID_HANDLE", "No model found for handle $handle", null)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "releaseModel: Failed to release model with handle $handle: ${e.message}", e)
-                    withContext(Dispatchers.Main) { promise.reject("RELEASE_FAILED", e.message ?: "Unknown error", e) }
+                    withContext(Dispatchers.Main) {
+                        promise.reject("RELEASE_FAILED", e.message ?: "Unknown error", e)
+                    }
                 }
             }
+
             activeJobs.add(job)
             job.invokeOnCompletion { activeJobs.remove(job) }
         }
+
 
         AsyncFunction("updateSummaries") { rawResponse: String, promise: Promise ->
             CoroutineScope(Dispatchers.IO).launch {
@@ -1145,12 +1160,18 @@ class LingoproMultimodalModule : Module() {
                     System: 
                         You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
                         return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
-                        if you received an image return the description of the image in English in between <ImageSum></ImageSum>, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                        if you received an image return the description of the image in English in between <ImageSum></ImageSum> after you are done with the <AI></AI> tag, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                         Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
-                        please don't forget the closing tag </Tools>
-                        All answers by you should contain the four tags [AI, ImageSum, sum, Tools], do not nest any tag into the other.
-                        You are provided with the chat history between you and the user as the following (empty if new chat)
+                        please don't forget the closing tags
+                        All answers by you should be in between one of the four tags <AI></AI>, <ImageSum></ImageSum>, <sum></sum>, <Tools></Tools> (sequentially and not nested inside each other)!.
+                        Answer format ->
+                        <AI>your answer here</AI>
+                        <ImageSum> image desciption here.... </ImageSum>
+                        <sum>he said this, you said that as sumamry</sum>
+                        <Tools>[...]</Tools>
+                        
+                        BAD FORMAT -> <AI>your answer here <ImageSum>...</ImageSum></AI>
                     """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1418,12 +1439,11 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Parsed tool list: ${toolsJsonList}")
 
                         if(toolsJsonList.isEmpty()) {
-                            sendEvent("onPartialResponse", mapOf(
-                                "handle" to handle,
-                                "requestId" to requestId,
-                                "response" to rawResponse
-                            ))
-                            withContext(Dispatchers.Main) { promise.resolve(true) } // Just send success signal
+                            if(toolsJsonList.isEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    promise.resolve(rawResponse) // Send the full string directly
+                                }
+                            }
                         } else {
                             // Step 3: Execute tools sequentially (max 3 tools)
                             val toolResults = processTools(toolsJsonList)
