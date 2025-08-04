@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, SafeAreaView, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, Modal, Pressable } from 'react-native';
-import { AntDesign, MaterialCommunityIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { AntDesign, FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
-import { useModel } from '../context/ModelContext';
 
 type Word = {
     id: number;
@@ -196,17 +195,18 @@ export default function SRSSystem() {
 
         setIsLoading(true);
         try {
-            const success = await LingoProMultimodal.insertWord(
-                newWordData.language,
-                newWordData.word,
-                newWordData.meaning,
-                newWordData.writing || newWordData.word,
-                newWordData.wordType,
-                newWordData.category1,
-                newWordData.category2,
-                newWordData.phonetics,
-                newWordData.tags || []
-            );
+            const success = await LingoProMultimodal.insertWord({
+                language: newWordData.language,
+                word: newWordData.word,
+                meaning: newWordData.meaning,
+                writing: newWordData.writing || newWordData.word,
+                wordType: newWordData.wordType,
+                category1: newWordData.category1,
+                category2: newWordData.category2,
+                phonetics: newWordData.phonetics,
+                tags: newWordData.tags || []
+            });
+
 
             if (success) {
                 Alert.alert("Success", `Word "${newWordData.word}" added!`);
