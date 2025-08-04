@@ -245,6 +245,11 @@ export default function ChatScreen() {
 
       streamingListenersRef.current.push(partialSub);
 
+      const logSub = ExpoLlmMediapipe.addListener("logging", (ev) => {
+        console.log("[", ev.handle, "] ",ev.message)
+      });
+      streamingListenersRef.current.push(logSub);
+
       await LingoProMultimodal.generateResponseAsync(
         modelHandle,
         currentRequestId,
