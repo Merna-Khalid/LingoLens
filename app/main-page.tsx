@@ -123,6 +123,15 @@ export default function MainPageScreen() {
     }
   };
 
+  const handleKnowledgeNav = () => {
+      if (selectedLanguage && selectedLevel) {
+        console.log(`Getting Database information for  ${selectedLanguage} at ${selectedLevel} level.`);
+        router.push('knowledge-interface');
+      } else {
+        console.log("Please select a language and level first.");
+      }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -235,7 +244,7 @@ export default function MainPageScreen() {
         <TouchableOpacity style={styles.navItemCenter} onPress={handleCameraPress}>
           <Text style={styles.navIconCenter}>📸</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
+        <TouchableOpacity style={styles.navItem} onPress={handleKnowledgeNav}>
           <Text style={styles.navIcon}>📚</Text>
           <Text style={styles.navText}>Knowledge</Text>
         </TouchableOpacity>
