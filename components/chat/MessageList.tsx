@@ -92,7 +92,7 @@ export default React.memo(function MessageList({
             />
           )}
 
-          {!isStreamingMessage && (aiThinking || isSummarizing) && (
+          {(aiThinking || isSummarizing) && (
             <View style={[styles.messageBubble, styles.aiBubble, styles.aiThinkingBubble]}>
               <ActivityIndicator size="small" color="#333" />
               <Text style={styles.timestamp}>

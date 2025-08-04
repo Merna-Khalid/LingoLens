@@ -46,12 +46,15 @@ class LlmInferenceModel(
     val inferenceListener: InferenceListener? = null,
 ) {
     // private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val lock = Any()
     private lateinit var llmInference: LlmInference
     private lateinit var llmInferenceSession: LlmInferenceSession
 
     @Volatile
-    private var isSessionRunning = false
     private var currentJob: Job? = null
+
+    @Volatile
+    private var isModelRunning = false
 
     // For tracking current request
     private var requestId: Int = 0
@@ -83,9 +86,6 @@ class LlmInferenceModel(
                 - Temperature (configured): $temperature
                 - Random Seed (configured): $randomSeed
                 - Multi-modal (configured): $multiModal
-                Note: 'max_num_images' is an intrinsic model property and not directly queryable from the LlmInference public API.
-                      The previous error 'Image added exceeds the maximum number of images allowed: 0' indicates that
-                      the loaded model's internal configuration for max_num_images is indeed 0, regardless of the 'multiModal' flag passed here.
               """.trimIndent()
                     Log.d("LlmInferenceModel", characteristicsMessage)
                     inferenceListener?.logging(this, characteristicsMessage)
@@ -189,6 +189,7 @@ class LlmInferenceModel(
 
         currentJob = externalScope.launch(Dispatchers.IO) {
             try {
+                isModelRunning = true
                 synchronized(this@LlmInferenceModel) {
                     this@LlmInferenceModel.requestId = requestId
                     this@LlmInferenceModel.requestResult = ""
@@ -245,8 +246,10 @@ class LlmInferenceModel(
                             // Ensure the input stream is closed
                             try {
                                 inputStream.close()
+
                             } catch (e: IOException) {
                                 Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                                isModelRunning = false
                             }
                         }
                     }
@@ -263,6 +266,7 @@ class LlmInferenceModel(
                     Log.d("LlmInferenceModel", "Generate Response Async here, $result")
 
                     if (isFinished) {
+                        isModelRunning = false
                         callback(requestResult)
                     }
                 }
@@ -272,11 +276,13 @@ class LlmInferenceModel(
                 llmInferenceSession.generateResponseAsync(progressListener)
             } catch (e: Exception) {
                 Log.e("LlmInferenceModel", "Async inference error: ${e.message}", e)
+                isModelRunning = false
                 inferenceListener?.onError(
                     this@LlmInferenceModel,
                     requestId,
                     e.message ?: "Unknown async inference error"
                 )
+                isModelRunning = false
                 callback("")
             }
         }
@@ -290,9 +296,11 @@ class LlmInferenceModel(
 
         currentJob?.cancel()
         currentJob = null
+        isModelRunning = true
 
         currentJob = externalScope.launch(Dispatchers.IO) {
             try {
+                Log.d("LlmInferenceModel", "inside coroutine for requestId: $requestId")
                 synchronized(this@LlmInferenceModel) {
                     this@LlmInferenceModel.requestId = requestId
                     this@LlmInferenceModel.requestResult = ""
@@ -304,8 +312,9 @@ class LlmInferenceModel(
 
                 } catch (e: Exception) {
                     Log.w("LlmInferenceModel", "Failed to close old session: ${e.message}")
+                    isModelRunning = false
                 }
-
+                Log.d("LlmInferenceModel", "session options for requestId: $requestId")
                 val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                     .setTemperature(temperature)
                     .setTopK(topK)
@@ -351,6 +360,7 @@ class LlmInferenceModel(
                                 inputStream.close()
                             } catch (e: IOException) {
                                 Log.d("LlmInferenceModel", "Error closing input stream: ${e.message}")
+                                isModelRunning = false
                             }
                         }
                     }
@@ -358,7 +368,9 @@ class LlmInferenceModel(
                 Log.d("LlmInferenceModel", "Generating response...")
                 val result = llmInferenceSession.generateResponse()
                 Log.d("LlmInferenceModel", "Generation complete")
+                Log.d("LlmInferenceModel", "Answer prompt: $result")
                 inferenceListener?.onResults(this@LlmInferenceModel, requestId, result)
+                isModelRunning = false
                 withContext(Dispatchers.Main) {
                     callback(result)
                 }
@@ -366,11 +378,12 @@ class LlmInferenceModel(
             } catch (e: Exception) {
                 Log.e("LlmInferenceModel", "Inference error", e)
                 inferenceListener?.onError(this@LlmInferenceModel, requestId, e.message ?: "Unknown error")
+                isModelRunning = false
                 withContext(Dispatchers.Main) {
                     callback("")
                 }
             } finally {
-                llmInferenceSession.close()
+                isModelRunning = false
             }
         }
     }
@@ -387,6 +400,12 @@ class LlmInferenceModel(
 
             inferenceListener?.logging(this, "Closing model...")
 
+            withTimeoutOrNull(5000) { // optional timeout
+                while (isModelRunning) {
+                    delay(100)
+                }
+            }
+
             llmInferenceSession?.let {
                 it.close()
                 inferenceListener?.logging(this, "Session closed")
@@ -396,10 +415,10 @@ class LlmInferenceModel(
                 it.close()
                 inferenceListener?.logging(this, "Inference closed")
             }
+
         } catch (e: Exception) {
             Log.e("LlmInferenceModel", "Error closing resources: ${e.message}", e)
             inferenceListener?.logging(this, "Error closing resources: ${e.message}")
         }
     }
-
 }

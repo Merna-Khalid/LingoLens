@@ -85,7 +85,7 @@ export const ModelProvider: React.FC<ModelProviderProps> = ({ children }) => {
 
   // Function to release the currently loaded model
   const releaseLoadedModel = useCallback(async () => {
-      if (modelHandle === null) return;
+      // if (modelHandle === null) return;
 
       try {
         console.log(`Releasing model with handle: ${modelHandle}`);

@@ -316,27 +316,27 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     fun bulkInsertCards(
-        words: List<Pair<String, String>>,
-        language: String,
-        topic: String,
+        words: List<Word>,
         deckLevel: String
     ): List<SrsCard> = withTransaction { db ->
-        words.mapNotNull { (word, meaning) ->
+        words.mapNotNull { wordData ->
             val wordValues = ContentValues().apply {
-                put(COLUMN_LANGUAGE, language)
-                put(COLUMN_WORD, word)
-                put(COLUMN_MEANING, meaning)
-                put(COLUMN_WRITING, word)
-                put(COLUMN_WORD_TYPE, "noun")
-                put(COLUMN_CATEGORY_1, topic)
-                put(COLUMN_TAGS, JSONArray(listOf("generated", topic)).toString())
+                put(COLUMN_LANGUAGE, wordData.language)
+                put(COLUMN_WORD, wordData.word)
+                put(COLUMN_MEANING, wordData.meaning)
+                put(COLUMN_WRITING, wordData.writing)
+                put(COLUMN_WORD_TYPE, wordData.wordType)
+                put(COLUMN_CATEGORY_1, wordData.category1)
+                put(COLUMN_CATEGORY_2, wordData.category2)
+                put(COLUMN_PHONETICS, wordData.phonetics)
+                put(COLUMN_TAGS, JSONArray(wordData.tags).toString())
             }
             val wordId = db.insert(TABLE_WORDS, null, wordValues)
 
             if (wordId != -1L) {
                 val cardValues = ContentValues().apply {
                     put(COLUMN_WORD_ID, wordId)
-                    put(COLUMN_LANGUAGE, language)
+                    put(COLUMN_LANGUAGE, wordData.language)
                     put(COLUMN_DUE_DATE, calculateDueDate(INITIAL_INTERVAL))
                     put(COLUMN_INTERVAL, INITIAL_INTERVAL)
                     put(COLUMN_EASE_FACTOR, 2.5f)
@@ -379,6 +379,23 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             cursor.mapToList { parseWordFromCursor(it) }
         }
     } ?: emptyList()
+
+    fun getWordById(id: Long): Word? = safeDatabaseRead { db ->
+        db.query(
+            TABLE_WORDS,
+            null,
+            "$COLUMN_ID = ?",
+            arrayOf(id.toString()),
+            null, null, null,
+            "1"  // LIMIT 1
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                parseWordFromCursor(cursor)
+            } else {
+                null
+            }
+        }
+    }
 
     fun getNounsByCategory(language: String, category1: String): List<Word> = safeDatabaseRead { db ->
         db.query(

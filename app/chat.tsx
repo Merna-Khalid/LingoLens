@@ -69,6 +69,7 @@ export default function ChatScreen() {
   const hasStartedStreamingRef = useRef(false);
   // A ref to store the full streamed text as it arrives
   const streamedTextRef = useRef('');
+  const fullResponseRef = useRef('');
 
   const initialPromptSentRef = useRef(false);
 
@@ -143,6 +144,8 @@ export default function ChatScreen() {
     streamedTextRef.current = ''; // Reset the text ref for a new request
     let seenClosingAI = false;
 
+
+
     try {
       if (!modelHandle) throw new Error("modelHandle is null.");
 
@@ -175,6 +178,7 @@ export default function ChatScreen() {
 
           for (const char of ev.response) {
             buffer += char;
+            fullResponseRef.current += char;
 
             if (seenClosingAI && !isSummarizing && !char.match(/\s/) && char !== '<') {
                         setIsSummarizing(true);
@@ -259,7 +263,7 @@ export default function ChatScreen() {
       }]);
     } finally {
       // Use the final buffered text for summarization
-      await LingoProMultimodal.updateSummaries(streamedTextRef.current);
+      await LingoProMultimodal.updateSummaries(fullResponseRef.current);
 
       // This is the final cleanup block that runs after the response is complete
       setStreamedMessage(currentStreamedMessage => {
@@ -274,6 +278,7 @@ export default function ChatScreen() {
       setIsSummarizing(false);
 
       streamedTextRef.current = '';
+      fullResponseRef.current = '';
     }
   }, [
     isModelLoaded,

@@ -68,6 +68,7 @@ export default function LearningPage() {
     if (!isModelLoaded && !isLoadingModel) {
       loadModel(DEFAULT_MODEL_PATH).catch(console.error);
     }
+    loadUserSettings()
   }, [isModelLoaded, isLoadingModel, loadModel]);
 
   // Handle back button press to cancel ongoing requests and release the model
@@ -89,112 +90,148 @@ export default function LearningPage() {
 
   // --- FETCH RECOMMENDATIONS ---
   useEffect(() => {
-    loadUserSettings();
-    const fetchRecommendations = async () => {
-      if (!isModelLoaded) {
-        console.log("Model not loaded yet. Waiting for model to load...");
-        return;
-      }
-      setIsLoadingContent(true);
-      try {
-        const count = 10;
-        const topicStringsRaw: string = await LingoProMultimodal.getRecommendedTopics(modelHandle, Math.floor(Math.random() * 1000000), selectedLanguage, count);
-        const topicStrings = topicStringsRaw
-          .slice(1, -1)
-          .split(",")
-          .map(item => item.trim());
+      const fetchRecommendations = async () => {
+          if (!isModelLoaded) return;
 
-        const previews: TopicPreview[] = await Promise.all(
-          topicStrings.map(async (topic) => {
-            const preview: TopicPreview = JSON.parse(await LingoProMultimodal.getTopicPreview(topic, selectedLanguage));
-            return {
-              topic: preview.topic,
-              wordCount: preview.wordCount,
-              exampleWords: Array.isArray(preview.exampleWords) ? preview.exampleWords.join(', ') : preview.exampleWords,
-            } as TopicPreview;
-          })
-        );
-        setRecommendedTopics({
-          priorityTopics: previews.slice(0, 3),
-          otherTopics: previews.slice(3),
-        });
-      } catch (error: any) {
-        console.error('Error fetching recommendations:', error);
-        Alert.alert('Error', `Failed to get learning recommendations: ${error.message}`);
-      } finally {
-        setIsLoadingContent(false);
-      }
-    };
-    fetchRecommendations();
-  }, [isDbInitialized, selectedLanguage, isModelLoaded]);
+          setIsLoadingContent(true);
+          try {
+              const count = 10;
+              const topicStringsRaw = await LingoProMultimodal.getRecommendedTopics(
+                  modelHandle,
+                  Math.floor(Math.random() * 1000000),
+                  selectedLanguage,
+                  count
+              );
+
+              // Safely parse topics
+              const topicStrings = topicStringsRaw
+                  ?.replace(/^\[|\]$/g, '') // Remove brackets
+                  .split(',')
+                  .map(item => item.trim().replace(/^"|"$/g, '')) // Remove quotes
+                  .filter(Boolean) || []; // Fallback to empty array
+
+              if (!topicStrings.length) {
+                  console.log('No topics received from model');
+                  return;
+              }
+
+              // Process previews with error handling per topic
+              const previews = await Promise.all(
+                  topicStrings.map(async (topic) => {
+                      try {
+                          const previewJson = await LingoProMultimodal.getTopicPreview(topic, selectedLanguage);
+                          const preview = JSON.parse(previewJson);
+                          return {
+                              topic: preview.topic || topic,
+                              wordCount: preview.wordCount || 0,
+                              exampleWords: Array.isArray(preview.exampleWords)
+                                  ? preview.exampleWords.join(', ')
+                                  : (preview.exampleWords || 'No examples'),
+                          };
+                      } catch (error) {
+                          console.warn(`Failed to process topic ${topic}:`, error);
+                          return {
+                              topic,
+                              wordCount: 0,
+                              exampleWords: 'Loading failed',
+                          };
+                      }
+                  })
+              );
+
+              setRecommendedTopics({
+                  priorityTopics: previews.slice(0, 3),
+                  otherTopics: previews.slice(3),
+              });
+          } catch (error) {
+              console.error('Error in recommendation flow:', error);
+              // No alert - empty state UI will handle it
+          } finally {
+              setIsLoadingContent(false);
+          }
+      };
+
+      fetchRecommendations();
+  }, [isModelLoaded, selectedLanguage]);
 
   // --- HANDLE GENERATING CONTENT (MODIFIED) ---
   const handleGenerateContent = useCallback(async (topicToGenerate: string) => {
-    if (!isDbInitialized || !modelHandle) {
-      Alert.alert("Error", "Database not initialized or model not loaded. Cannot generate content.");
-      return;
-    }
-    const count = parseInt(numberOfCards, 10);
-    if (!topicToGenerate || isNaN(count) || count < 1 || count > 20) {
-      Alert.alert("Invalid Input", "Please select or enter a valid topic and number of cards (1-20).");
-      return;
-    }
-
-    setIsLoadingContent(true);
-
-    // Create a new AbortController for this specific request
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const result = await LingoProMultimodal.generateTopicCards({
-        handle: modelHandle,
-        requestId: Math.floor(Math.random() * 1000000),
-        topic: topicToGenerate,
-        language: selectedLanguage,
-        count: count,
-        deckLevel: "a1",
-        // Pass the signal to the API call for cancellation
-        signal: controller.signal,
-      });
-
-      // Clear the controller reference after a successful call
-      abortControllerRef.current = null;
-
-      const wordsForDisplay: Word[] = result.cards.map((card: any) => ({
-        id: card.wordId,
-        language: selectedLanguage,
-        word: card.word || "Generated Word",
-        meaning: card.meaning || "Generated Meaning",
-        writing: card.writing || card.word || "Generated Word",
-        wordType: card.wordType || "unknown",
-        category1: topicToGenerate,
-        tags: card.tags || [],
-      }));
-
-      router.navigate({
-        pathname: '/LearningSystem/generated-content-page',
-        params: {
-          generatedWords: JSON.stringify(wordsForDisplay),
-          generatedStory: JSON.stringify({ original: result.content, translation: result.translation }),
-        },
-      });
-
-    } catch (error: any) {
-      // Check if the error is due to cancellation
-      if (error.name === 'AbortError') {
-        console.log('Request was aborted by user.');
-        // Do not show an alert for a canceled request
-      } else {
-        console.error('Error generating content:', error);
-        Alert.alert('Error', `Failed to generate content: ${error.message}`);
+      if (!isDbInitialized || !modelHandle) {
+          Alert.alert("Error", "System not ready");
+          return;
       }
-    } finally {
-      // Ensure loading state is turned off, even if there's an error or cancellation
-      setIsLoadingContent(false);
-      abortControllerRef.current = null;
-    }
-  }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage, router]);
+
+      const count = parseInt(numberOfCards, 10);
+      if (!topicToGenerate || isNaN(count) || count < 1 || count > 20) {
+          Alert.alert("Invalid Input", "Please enter 1-20 cards");
+          return;
+      }
+
+      setIsLoadingContent(true);
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+          // The result will now be a structured object from Kotlin
+          const result = await LingoProMultimodal.generateTopicCards(
+              modelHandle,
+              Math.floor(Math.random() * 100000),
+              topicToGenerate,
+              selectedLanguage,
+              count,
+              "a1" // deckLevel
+          ).catch(e => {
+             if (e.message.includes('Timeout')) {
+               Alert.alert('Timeout', 'Generation took too long');
+             } else {
+               Alert.alert('Error', 'Content generation failed');
+             }
+             console.error('Generation promise caught an error:', e);
+             return null;
+           });
+
+           if (result === null || !result.cards) {
+               Alert.alert("Error", "Failed to generate content. Please try again.");
+               return;
+           }
+
+          // The result.cards are already in the correct format now
+          const wordsForDisplay: Word[] = result.cards.map((card: any) => ({
+              id: card.id,
+              language: selectedLanguage,
+              word: card.word || "Generated Word",
+              meaning: card.meaning || "Generated Meaning",
+              writing: card.writing || card.word || "Generated Word",
+              wordType: card.wordType || "noun",
+              category1: topicToGenerate,
+              tags: card.tags || [],
+              phonetics: card.phonetics || "",
+          }));
+
+          // The story data is now directly in the result object
+          const generatedStory = {
+              original: result.content,
+              translation: result.translation,
+          };
+
+          router.navigate({
+              pathname: '/LearningSystem/generated-content-page',
+              params: {
+                  generatedWords: JSON.stringify(wordsForDisplay),
+                  generatedStory: JSON.stringify(generatedStory),
+              },
+          });
+
+      } catch (error) {
+          if (error.name !== 'AbortError') {
+              Alert.alert("Error", "Failed to generate content");
+              console.error('Generation error:', error);
+          }
+      } finally {
+          setIsLoadingContent(false);
+          abortControllerRef.current = null;
+      }
+  }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage]);
 
   // --- NEW FUNCTION TO HANDLE TOPIC SELECTION AND GENERATION ---
   const handleSelectTopic = useCallback((topic: string) => {
