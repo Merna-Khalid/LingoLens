@@ -1,9 +1,9 @@
+import Clipboard from '@react-native-clipboard/clipboard';
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { ChatMessage as ChatMessageType } from './types';
-import Clipboard from '@react-native-clipboard/clipboard';
-import Markdown from 'react-native-markdown-display';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   messageBubble: {
-    maxWidth: '80%',
+    maxWidth: '90%',
     padding: 12,
     borderRadius: 15,
     marginBottom: 10,
@@ -212,7 +212,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     alignSelf: 'auto',
     minWidth: 60,
-    maxWidth: '90%',
   },
   textContainer: {
     flexShrink: 1,
