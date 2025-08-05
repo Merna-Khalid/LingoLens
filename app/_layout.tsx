@@ -2,11 +2,12 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React from 'react'; // React needs to be imported for React.Fragment
+import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import { ModelProvider } from './context/ModelContext';
-
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { ActivityIndicator, View } from 'react-native';
+import LingoProMultimodalModule from 'lingopro-multimodal-module';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -14,9 +15,32 @@ export default function RootLayout() {
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
 
-  if (!loaded) {
-    // Async font loading only occurs in development.
-    return null;
+  const [dbReady, setDbReady] = useState(false);
+
+   useEffect(() => {
+      const initializeDatabase = async () => {
+        try {
+          const success = await LingoProMultimodalModule.initializeDatabase();
+          if (!success) {
+            console.error('Database initialization failed');
+            // Consider adding retry logic here
+          }
+          setDbReady(true);
+        } catch (error) {
+          console.error('Database initialization error:', error);
+          setDbReady(true); // Still continue to app but log error
+        }
+      };
+
+      initializeDatabase();
+    }, []);
+
+    if (!loaded || !dbReady) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" />
+        </View>
+      );
   }
 
   return (

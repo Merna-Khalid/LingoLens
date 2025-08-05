@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
 
+// Define the structure of a Word object
 type Word = {
     id: number;
     language: string;
@@ -20,11 +21,12 @@ type Word = {
     tags: string[];
 };
 
-type Card = {
+// Define the structure of an SrsCard object
+type SrsCard = {
     id: number;
     wordId: number;
     language: string;
-    dueDate: string;
+    dueDate: string; // ISO 8601 string
     interval: number;
     repetitions: number;
     easeFactor: number;
@@ -32,8 +34,9 @@ type Card = {
     deckLevel: string;
 };
 
+// Define the combined type for due cards fetched from the native module
 type DueCardWithWord = {
-    card: Card;
+    card: SrsCard;
     word: Word;
 };
 
@@ -47,8 +50,8 @@ export default function App() {
 
     const [isDbInitialized, setIsDbInitialized] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const [currentCard, setCurrentCard] = useState<Card | null>(null);
-    const [currentWord, setCurrentWord] = useState<Word | null>(null);
+    const [currentCard, setCurrentCard] = useState<SrsCard | null>(null); // Use SrsCard type
+    const [currentWord, setCurrentWord] = useState<Word | null>(null); // Use Word type
     const [isCardFlipped, setIsCardFlipped] = useState(false);
     const [dueCardsCount, setDueCardsCount] = useState(0);
     const [showAddWordModal, setShowAddWordModal] = useState(false);
@@ -152,8 +155,8 @@ export default function App() {
             } else {
                 setDueCardsCount(dueCardsWithWords.length);
                 const firstDueCard = dueCardsWithWords[0];
-                setCurrentCard(firstDueCard.card);
-                setCurrentWord(firstDueCard.word);
+                setCurrentCard(firstDueCard.card); // Access the nested card object
+                setCurrentWord(firstDueCard.word); // Access the nested word object
                 console.log("Fetched new card and word:", firstDueCard.word);
             }
 
@@ -176,8 +179,10 @@ export default function App() {
         }
         setIsLoading(true);
         try {
-            const updatedCard = await LingoProMultimodal.logReview(currentCard.id, quality);
+            // The logReview function returns the updated SrsCard directly
+            const updatedCard: SrsCard = await LingoProMultimodal.logReview(currentCard.id, quality);
             console.log('Review logged, updated card:', updatedCard);
+            // After logging review, re-fetch due cards to get the next one
             await fetchDueCards();
         } catch (error: any) {
             console.error("Error logging review:", error);
@@ -199,7 +204,8 @@ export default function App() {
 
         setIsLoading(true);
         try {
-            const success = await LingoProMultimodal.insertWord({
+            // The insertWord function in Kotlin returns the ID of the inserted word
+            const wordId = await LingoProMultimodal.insertWord({
                 language: newWordData.language,
                 word: newWordData.word,
                 meaning: newWordData.meaning,
@@ -211,10 +217,11 @@ export default function App() {
                 tags: newWordData.tags || []
             });
 
-
-            if (success) {
+            if (wordId !== -1) { // Assuming -1L is returned on failure from Kotlin
                 Alert.alert("Success", `Word "${newWordData.word}" added!`);
                 resetForm();
+                // After adding a word, you might want to add it to SRS immediately
+                // For now, just re-fetch due cards to see if it becomes due soon
                 await fetchDueCards();
             } else {
                 Alert.alert("Error", "Failed to add word.");
@@ -234,7 +241,8 @@ export default function App() {
         }
         setIsLoading(true);
         try {
-            const allWords: Word[] = await LingoProMultimodal.getAllWords();
+            const allWordsJson = await LingoProMultimodal.getAllWords();
+            const allWords: Word[] = JSON.parse(allWordsJson); // Parse the JSON string
             const wordList = allWords.map((w: Word) => `${w.word} (${w.language}) - ${w.meaning}`).join('\n');
             Alert.alert("All Saved Words", wordList || "No words saved yet.");
         } catch (error: any) {

@@ -20,10 +20,9 @@ import java.io.BufferedInputStream
 import java.util.UUID
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
-// import expo.modules.lingopromultimodalmodule.LlmInferenceModel
-// import expo.modules.lingopromultimodalmodule.InferenceListener
-// import expo.modules.lingopromultimodalmodule.DatabaseHelper
 
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
 private const val DOWNLOAD_DIRECTORY = "llm_models"
@@ -32,9 +31,11 @@ private const val MAX_TOKENS = 22000
 
 class LingoproMultimodalModule : Module() {
     private val moduleCoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var activeJobs: MutableList<Job> = mutableListOf()
+    private val activeJobs = mutableMapOf<Int, Job>()
     private var activeModelHandle: Int? = null
     private val releasedHandles = mutableSetOf<Int>()
+
+    private val dbOperationMutex = Mutex()
 
     private var nextHandle = 1
     private val modelMap = mutableMapOf<Int, LlmInferenceModel>()
@@ -47,7 +48,13 @@ class LingoproMultimodalModule : Module() {
     private val activeDownloads = mutableMapOf<String, Job>()
     private val dbHelper by lazy {
         val context = appContext.reactContext ?: throw IllegalStateException("React context is null")
-        DatabaseHelper.getInstance(context)
+        DatabaseHelper.getInstance(context).also { helper ->
+            // Verify database state immediately
+            if (!helper.isDatabaseValid()) {
+                Log.w(TAG, "Database invalid, attempting safe initialization...")
+                helper.safeInitialize()
+            }
+        }
     }
     // Define these functions at class level, not in the definition block
     private fun createInferenceListener(modelHandle: Int): InferenceListener {
@@ -156,8 +163,7 @@ class LingoproMultimodalModule : Module() {
     }
 
     // Create model internal helper method
-    private fun createModelInternal(modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean): Int {
-        val modelHandle = nextHandle++
+    private fun createModelInternal(modelHandle: Int, modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean): Int {
         val model = LlmInferenceModel(
             appContext.reactContext!!,
             modelPath,
@@ -318,12 +324,6 @@ class LingoproMultimodalModule : Module() {
 
     // Tool definitions (model-friendly format)
     private val availableTools = listOf(
-//        createToolDefinition(
-//            name = "insertWord",
-//            description = "Save a single word to the database",
-//            properties = wordProperties,
-//            required = requiredWordFields
-//        ),
         createToolDefinition(
             name = "bulkInsertWords",
             description = "Save one or more words to the database as SRS cards. The words will be added to the 'default' deck.",
@@ -527,24 +527,28 @@ class LingoproMultimodalModule : Module() {
 
         // ---------------------------- DATABASE MANAGEMENT ----------------------------------------
 
+        // 1. Explicit initialization (recommended)
         AsyncFunction("initializeDatabase") { promise: Promise ->
-            try {
-                val success = dbHelper.forceInitializeDatabase()
-                if (success) {
-                    promise.resolve(true)
-                } else {
-                    promise.reject(
-                        "DB_INIT_ERROR",
-                        "Failed to force initialize the database",
-                        Exception("Database initialization returned false")
-                    )
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Force initialization check
+                    val success = dbHelper.isDatabaseValid() || dbHelper.safeInitialize()
+                    promise.resolve(success)
+                } catch (e: Exception) {
+                    promise.reject("DB_INIT_ERROR", e.message, e)
                 }
-            } catch (e: Exception) {
-                promise.reject(
-                    "DB_INIT_ERROR",
-                    "Failed to initialize database: ${e.message}",
-                    e
-                )
+            }
+        }
+
+        // 2. Emergency recovery (user-confirmed)
+        AsyncFunction("recreateDatabase") { promise: Promise ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    dbHelper.forceInitializeDatabase() // Your existing destructive method
+                    promise.resolve(true)
+                } catch (e: Exception) {
+                    promise.reject("DB_RECREATE_ERROR", e.message, e)
+                }
             }
         }
 
@@ -781,7 +785,13 @@ class LingoproMultimodalModule : Module() {
                 deckLevel: String,
                 promise: Promise ->
 
-            CoroutineScope(Dispatchers.IO).launch {
+            // Cancel any previous jobs for this handle
+            synchronized(activeJobs) {
+                activeJobs[handle]?.cancel("Cancelling previous request for handle $handle")
+                activeJobs.remove(handle)
+            }
+
+            val job = CoroutineScope(Dispatchers.IO).launch {
                 try {
                     if (count !in 1..20) {
                         promise.reject("INVALID_COUNT", "Count must be 1-20", null)
@@ -795,46 +805,82 @@ class LingoproMultimodalModule : Module() {
 
                     // A single prompt to generate words, the story, and the story's translation
                     val combinedPrompt = """
-        Generate $count basic $language vocabulary words about the topic "$topic". Also, write a short, simple story or dialogue in $language that uses these words.
-
-        Return the vocabulary as a JSON object inside <Json></Json> tags.
-        Return the story in $language inside <Story></Story> tags.
-        Return an English translation of the story inside <StoryTrans></StoryTrans> tags.
-
-        The JSON object should have a single key "words", which is an array of objects.
-        Each object must contain the keys: "word", "meaning", "phonetics", "writing", "wordType", and "tags".
-        
-        The story should be a few paragraphs long and use the generated vocabulary.
-
-        Example format:
-        <Json>
-        {
-          "words": [
-            {
-              "word": "hallo",
-              "meaning": "hello",
-              "phonetics": "/ˈhalo/",
-              "writing": "hallo",
-              "wordType": "greeting",
-              "tags": ["greeting", "beginner"]
-            }
-          ]
-        }
-        </Json>
-        <Story>
-        Guten Tag! Ich bin Anna und das ist mein Buch. Ich lese gern.
-        </Story>
-        <StoryTrans>
-        Good day! I am Anna and this is my book. I like to read.
-        </StoryTrans>
-    """.trimIndent()
+                        SYSTEM PROMPT:
+                        You are a language learning assistant specializing in $language. Generate $count basic vocabulary words about "$topic" and create a short story using them.
+                        
+                        # INSTRUCTIONS
+                        1. VOCABULARY:
+                           - Generate $count words related to "$topic"
+                           - Format as JSON with exact structure:
+                             {
+                               "words": [
+                                 {
+                                   "word": "",        // $language word
+                                   "meaning": "",     // English translation
+                                   "phonetics": "",   // IPA pronunciation
+                                   "writing": "",     // How to write it
+                                   "wordType": "",    // noun/verb/adjective/etc
+                                   "tags": []         // Relevant categories
+                                 }
+                               ]
+                             }
+                        
+                        2. STORY REQUIREMENTS:
+                           - Use all generated words naturally
+                           - 3-5 paragraphs in $language
+                           - Simple sentences for beginners
+                           - Include dialogue when possible
+                        
+                        3. OUTPUT FORMAT:
+                        <Json>
+                        {/* EXACTLY the JSON structure above */}
+                        </Json>
+                        
+                        <Story>
+                        /* $language story here */
+                        </Story>
+                        
+                        <StoryTrans>
+                        /* English translation here */
+                        </StoryTrans>
+                        
+                        # EXAMPLE (German):
+                        <Json>
+                        {
+                          "words": [
+                            {
+                              "word": "Buch",
+                              "meaning": "book",
+                              "phonetics": "/buːx/",
+                              "writing": "Buch",
+                              "wordType": "noun",
+                              "tags": ["school", "objects"]
+                            }
+                          ]
+                        }
+                        </Json>
+                        <Story>
+                        Anna sucht ihr Buch. "Mama, wo ist mein Buch?" fragt sie. 
+                        Das Buch liegt auf dem Tisch. "Danke, Mama!" sagt Anna.
+                        </Story>
+                        <StoryTrans>
+                        Anna looks for her book. "Mom, where is my book?" she asks.
+                        The book is on the table. "Thank you, Mom!" says Anna.
+                        </StoryTrans>
+                        
+                        # NOTES:
+                        - Prioritize common, useful words
+                        - Include varied word types (nouns/verbs/adjectives)
+                        - Make story contextually relevant to $topic
+                        - Ensure translations are 100% accurate
+            """.trimIndent()
 
                     val response = try {
                         val deferredResult = CompletableDeferred<String>()
                         model.generateResponse(requestId, combinedPrompt, "") { result ->
                             deferredResult.complete(result)
                         }
-                        withTimeout(500_000) { // Increased timeout for two-part generation
+                        withTimeout(500_000) {
                             deferredResult.await()
                         }
                     } catch (e: TimeoutCancellationException) {
@@ -845,7 +891,6 @@ class LingoproMultimodalModule : Module() {
                         return@launch
                     }
 
-                    // Extract content using regex
                     val jsonRegex = "<Json>(.*?)</Json>".toRegex(RegexOption.DOT_MATCHES_ALL)
                     val storyRegex = "<Story>(.*?)</Story>".toRegex(RegexOption.DOT_MATCHES_ALL)
                     val storyTransRegex = "<StoryTrans>(.*?)</StoryTrans>".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -864,14 +909,13 @@ class LingoproMultimodalModule : Module() {
                         return@launch
                     }
 
-                    // Parse JSON for words and prepare them for insertion
                     val json = JSONObject(jsonContent)
                     val wordsArray = json.getJSONArray("words")
 
                     val wordsToInsert = (0 until wordsArray.length()).map { i ->
                         val item = wordsArray.getJSONObject(i)
                         Word(
-                            id = 0, // ID will be generated by the database
+                            id = 0,
                             language = language,
                             word = item.getString("word"),
                             meaning = item.getString("meaning"),
@@ -886,12 +930,15 @@ class LingoproMultimodalModule : Module() {
                         )
                     }
 
-                    // Call the revised bulkInsertCards function
-                    val cards = dbHelper.bulkInsertCards(wordsToInsert, deckLevel)
+                    val cardsAndWords = dbHelper.bulkInsertCards(wordsToInsert, deckLevel)
 
-                    // Resolve the promise with all the necessary data, filtering out any null cards
                     promise.resolve(mapOf(
-                        "cards" to cards.filter { it != null }.map { cardToJson(it) },
+                        "cards" to cardsAndWords.map { (srsCard, word) ->
+                            mapOf(
+                                "card" to cardToJson(srsCard),
+                                "word" to wordToJson(word)
+                            )
+                        },
                         "content" to storyContent,
                         "translation" to storyTransContent
                     ))
@@ -902,16 +949,36 @@ class LingoproMultimodalModule : Module() {
                     promise.reject("GENERATION_ERROR", "Generation failed: ${e.message}", e)
                 }
             }
+
+            synchronized(activeJobs) {
+                activeJobs[handle] = job
+            }
+
+            job.invokeOnCompletion { exception ->
+                synchronized(activeJobs) {
+                    activeJobs.remove(handle)
+                }
+                if (exception is CancellationException) {
+                    Log.d(TAG, "Job for handle $handle was cancelled.")
+                }
+            }
         }
 
 
-
         AsyncFunction("getRecommendedTopics") { handle: Int, requestId: Int, language: String, count: Int, promise: Promise ->
-            CoroutineScope(Dispatchers.IO).launch {
+            // Cancel any previous jobs for this handle
+            synchronized(activeJobs) {
+                activeJobs[handle]?.cancel()
+                activeJobs.remove(handle)
+            }
+
+            val job = CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    // 1. First try to get from database
+                    // 1. Get existing topics from the database
+                    // Fetch more existing topics than `count` to give the LLM more context for exclusion
+                    val existingTopicsLimit = count * 2 // Fetch double the count to ensure good exclusion
                     val dbTopics = try {
-                        dbHelper.getRecommendedTopics(language).also {
+                        dbHelper.getExistingTopics(language, existingTopicsLimit).also {
                             Log.d(TAG, "📦 Fetched ${it.size} topics from DB: $it")
                         }
                     } catch (e: Exception) {
@@ -920,14 +987,20 @@ class LingoproMultimodalModule : Module() {
                     }
 
                     val finalTopics = if (dbTopics.size >= count) {
+                        // If enough topics already exist in DB, just return the top 'count'
                         dbTopics.take(count)
                     } else {
+                        // Calculate how many more topics are needed from the LLM
+                        val topicsNeededFromLlm = count - dbTopics.size
+                        val excludeList = dbTopics.joinToString(", ") { it } // Topics to exclude
+
                         val prompt = """
-                    Suggest $count common vocabulary topics for learning $language.
-                    Return ONLY a raw JSON array like: ["family","food"].
-                    Exclude any explanations or additional text.
-                    Do NOT enclose the JSON array in markdown code blocks (```json ... ```).
-                """.trimIndent()
+            Suggest $topicsNeededFromLlm common vocabulary topics for learning $language.
+            Exclude the following topics if they are already in the list: $excludeList.
+            Return ONLY a raw JSON array like: ["family","food"].
+            Exclude any explanations or additional text.
+            Do NOT enclose the JSON array in markdown code blocks (```json ... ```).
+        """.trimIndent()
 
                         val model = modelMap[handle] ?: run {
                             Log.e(TAG, "Model not found for handle $handle")
@@ -942,7 +1015,12 @@ class LingoproMultimodalModule : Module() {
                             model.generateResponse(requestId, prompt, "") { finalResult ->
                                 deferredResult.complete(finalResult)
                             }
-                            deferredResult.await()
+                            withTimeout(500_000) { // Increased timeout for generation
+                                deferredResult.await()
+                            }
+                        } catch (e: TimeoutCancellationException) {
+                            Log.e(TAG, "LLM generation timed out", e)
+                            ""
                         } catch (e: Exception) {
                             Log.e(TAG, "❌ Error during LLM response", e)
                             ""
@@ -959,20 +1037,40 @@ class LingoproMultimodalModule : Module() {
                             emptyList()
                         }
 
+                        // Combine DB topics and LLM topics, remove duplicates, and take the required count
                         (dbTopics + llmTopics).distinct().take(count)
                     }
 
                     val result = finalTopics.ifEmpty {
+                        // Fallback to hardcoded topics if no topics are found from DB or LLM
                         listOf("basics", "greetings", "food", "travel", "numbers").also {
                             Log.w(TAG, "⚠️ Using fallback topics: $it")
                         }
                     }
 
                     Log.d(TAG, "✅ Final recommended topics: $result")
-                    promise.resolve(JSONObject(mapOf("topics" to result)).getJSONArray("topics").toString())
+                    // Resolve with the JSON array string
+                    promise.resolve(JSONArray(result).toString())
                 } catch (e: Exception) {
                     Log.e(TAG, "🔥 Failed to get recommended topics", e)
                     promise.reject("TOPIC_ERROR", "Failed to get recommended topics", e)
+                }
+            }
+
+            // Add the new job to activeJobs map
+            synchronized(activeJobs) {
+                activeJobs[handle] = job
+            }
+
+            job.invokeOnCompletion { exception ->
+                synchronized(activeJobs) {
+                    if (activeJobs[handle] == job) {
+                        activeJobs.remove(handle)
+                    }
+                }
+                if (exception is CancellationException) {
+                    Log.d(TAG, "Job for handle $handle was cancelled.")
+                    // No need to reject promise here, as it's already handled by the caller
                 }
             }
         }
@@ -980,37 +1078,36 @@ class LingoproMultimodalModule : Module() {
 
         AsyncFunction("getTopicPreview") { topic: String, language: String, promise: Promise ->
             CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val words = dbHelper.getNounsByCategory(language, topic).take(5)
-                    val wordCount = dbHelper.getWordCountByCategory(language, topic)
+                dbOperationMutex.withLock {
+                    try {
+                        val words = dbHelper.getNounsByCategory(language, topic)
+                        val exampleWords = words.take(5).map { it.word }
 
-                    // Handle case where topic exists but has no words yet
-                    val exampleWords = if (words.isEmpty()) {
-                        JSONArray(listOf("No examples yet"))
-                    } else {
-                        JSONArray(words.map { it.word })
+                        promise.resolve(
+                            JSONObject().apply {
+                                put("topic", topic)
+                                put("wordCount", words.size)
+                                put(
+                                    "exampleWords",
+                                    if (exampleWords.isEmpty()) JSONArray(listOf("No examples"))
+                                    else JSONArray(exampleWords)
+                                )
+                                put("totalWords", words.size)
+                            }.toString()
+                        )
+                    } catch (e: Exception) {
+                        promise.resolve(
+                            JSONObject().apply {
+                                put("topic", topic)
+                                put("wordCount", 0)
+                                put("exampleWords", JSONArray(listOf("Error")))
+                                put("totalWords", 0)
+                            }.toString()
+                        )
                     }
-
-                    val json = JSONObject().apply {
-                        put("topic", topic)
-                        put("wordCount", wordCount)
-                        put("exampleWords", exampleWords)
-                        put("totalWords", wordCount)
-                    }
-                    promise.resolve(json.toString())
-                } catch (e: Exception) {
-                    // Return minimal valid response instead of rejecting
-                    val fallback = JSONObject().apply {
-                        put("topic", topic)
-                        put("wordCount", 0)
-                        put("exampleWords", JSONArray(listOf("No examples available")))
-                        put("totalWords", 0)
-                    }
-                    promise.resolve(fallback.toString())
                 }
             }
         }
-
 
         // ---------------------------- DATABASE TOOLS END -----------------------------------------
 
@@ -1018,7 +1115,7 @@ class LingoproMultimodalModule : Module() {
 
         OnDestroy {
             Log.d(TAG, "LingoproMultimodal OnDestroy: Cancelling all active jobs and cleaning up models.")
-            activeJobs.forEach { it.cancel() }
+            activeJobs.values.forEach { it.cancel() }
             activeJobs.clear()
             moduleCoroutineScope.launch {
                 modelMap.values.forEach { it.close() }
@@ -1027,10 +1124,11 @@ class LingoproMultimodalModule : Module() {
         }
 
         AsyncFunction("createModel") { modelPath: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
+            val modelHandle = synchronized(this) { nextHandle++ }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
                     releasedHandles.clear()
-                    val modelHandle = nextHandle++
 
                     Log.d(TAG, "createModel: Attempting to create model from path: $modelPath, handle: $modelHandle")
                     sendEvent("logging", mapOf(
@@ -1075,7 +1173,9 @@ class LingoproMultimodalModule : Module() {
                     imageHistoryPath = NO_IMAGE
                     imageHistorySummary = ""
 
-                    modelMap[modelHandle] = model
+                    synchronized(modelMap) {
+                        modelMap[modelHandle] = model
+                    }
                     withContext(Dispatchers.Main) {
                         promise.resolve(modelHandle)
                     }
@@ -1089,11 +1189,23 @@ class LingoproMultimodalModule : Module() {
                     }
                 }
             }
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+            synchronized(activeJobs) {
+                activeJobs[modelHandle] = job
+            }
+
+            job.invokeOnCompletion {
+                synchronized(activeJobs) {
+                    // Only remove if still the same job
+                    if (activeJobs[modelHandle] == job) {
+                        activeJobs.remove(modelHandle)
+                    }
+                }
+            }
         }
 
         AsyncFunction("createModelFromAsset") { modelName: String, maxTokens: Int, topK: Int, temperature: Double, randomSeed: Int, multiModal: Boolean, promise: Promise ->
+            val modelHandle = synchronized(this) { nextHandle++ }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
                     releasedHandles.clear()
@@ -1114,7 +1226,7 @@ class LingoproMultimodalModule : Module() {
                         throw FileNotFoundException("Model file not found at path: ${modelFile.absolutePath}")
                     }
 
-                    val modelHandle = nextHandle++
+
                     val model = LlmInferenceModel(
                         appContext.reactContext!!,
                         modelFile.absolutePath,
@@ -1130,7 +1242,9 @@ class LingoproMultimodalModule : Module() {
                     imageHistoryPath = NO_IMAGE
                     imageHistorySummary = ""
 
-                    modelMap[modelHandle] = model
+                    synchronized(modelMap) {
+                        modelMap[modelHandle] = model
+                    }
                     withContext(Dispatchers.Main) {
                         promise.resolve(modelHandle)
                     }
@@ -1144,11 +1258,27 @@ class LingoproMultimodalModule : Module() {
                     }
                 }
             }
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+            synchronized(activeJobs) {
+                activeJobs[modelHandle] = job
+            }
+
+            job.invokeOnCompletion {
+                synchronized(activeJobs) {
+                    // Only remove if still the same job
+                    if (activeJobs[modelHandle] == job) {
+                        activeJobs.remove(modelHandle)
+                    }
+                }
+            }
         }
 
         AsyncFunction("releaseModel") { handle: Int, promise: Promise ->
+            // Cancel any existing jobs for this handle
+            synchronized(activeJobs) {
+                activeJobs.values.forEach { it.cancel() }
+                activeJobs.clear()
+            }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 if (releasedHandles.contains(handle)) {
                     Log.w(TAG, "releaseModel: Model $handle already released.")
@@ -1182,8 +1312,18 @@ class LingoproMultimodalModule : Module() {
                 }
             }
 
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+            synchronized(activeJobs) {
+                activeJobs[handle] = job
+            }
+
+            job.invokeOnCompletion {
+                synchronized(activeJobs) {
+                    // Only remove if still the same job
+                    if (activeJobs[handle] == job) {
+                        activeJobs.remove(handle)
+                    }
+                }
+            }
         }
 
 
@@ -1201,6 +1341,12 @@ class LingoproMultimodalModule : Module() {
         }
 
         AsyncFunction("generateResponse") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean,  promise: Promise ->
+            // Cancel any existing jobs for this handle
+            synchronized(activeJobs) {
+                activeJobs[handle]?.cancel()
+                activeJobs.remove(handle)
+            }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
 
@@ -1359,11 +1505,13 @@ class LingoproMultimodalModule : Module() {
                 }
             }
             synchronized(activeJobs) {
-                activeJobs.add(job)
+                activeJobs[handle] = job
             }
             job.invokeOnCompletion { exception ->
                 synchronized(activeJobs) {
-                    activeJobs.remove(job)
+                    if (activeJobs[handle] == job) {
+                        activeJobs.remove(handle)
+                    }
                 }
                 if (exception is CancellationException) {
                     promise.reject("CANCELLED", "Operation cancelled", exception)
@@ -1374,6 +1522,12 @@ class LingoproMultimodalModule : Module() {
         }
 
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
+            // Cancel any existing jobs for this handle
+            synchronized(activeJobs) {
+                activeJobs[handle]?.cancel()
+                activeJobs.remove(handle)
+            }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
                     val fixedSystemPrompt = """
@@ -1509,12 +1663,14 @@ class LingoproMultimodalModule : Module() {
             }
 
             synchronized(activeJobs) {
-                activeJobs.add(job)
+                activeJobs[handle] = job
             }
 
             job.invokeOnCompletion { exception ->
                 synchronized(activeJobs) {
-                    activeJobs.remove(job)
+                    if (activeJobs[handle] == job) {
+                        activeJobs.remove(handle)
+                    }
                 }
                 if (exception is CancellationException) {
                     promise.reject("CANCELLED", "Operation cancelled", exception)
@@ -1546,152 +1702,162 @@ class LingoproMultimodalModule : Module() {
             promise.resolve(result)
         }
 
-        // Download model from URL
+
         AsyncFunction("downloadModel") { url: String, modelName: String, options: Map<String, Any>?, promise: Promise ->
+            // Setup
             val modelFile = getModelFile(modelName)
             val overwrite = (options?.get("overwrite") as? Boolean) ?: false
+            val headers = options?.get("headers") as? Map<String, Any>
+            val timeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000
 
-            // Check if already downloading
-            if (activeDownloads.containsKey(modelName)) {
-                Log.w(TAG, "downloadModel: Model $modelName is already being downloaded.")
-                promise.reject("ERR_ALREADY_DOWNLOADING", "This model is already being downloaded", null)
-                return@AsyncFunction
-            }
+            synchronized(activeDownloads) {
+                // 1. Check for existing download
+                if (activeDownloads.containsKey(modelName)) {
+                    promise.reject(
+                        "ERR_ALREADY_DOWNLOADING",
+                        "Download already in progress",
+                        null  // Add null as third parameter
+                    )
+                    return@AsyncFunction
+                }
 
-            // Check if already exists
-            if (modelFile.exists() && !overwrite) {
-                Log.d(TAG, "downloadModel: Model $modelName already exists and overwrite is false. Resolving true.")
-                promise.resolve(true)
-                return@AsyncFunction
-            }
+                // 2. Check existing file
+                if (modelFile.exists() && !overwrite) {
+                    promise.resolve(true)
+                    return@AsyncFunction
+                }
 
-            // Start download in coroutine
-            val downloadJob = CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    Log.d(TAG, "downloadModel: Starting download for $modelName from $url")
-                    val connection = URL(url).openConnection() as HttpURLConnection
+                // 3. Start download
+                val downloadJob = CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        Log.d(TAG, "Starting download: $modelName from $url")
+                        sendEvent("downloadProgress", mapOf(
+                            "modelName" to modelName,
+                            "status" to "starting",
+                            "progress" to 0.0
+                        ))
 
-                    // Add custom headers if provided
-                    (options?.get("headers") as? Map<String, Any>)?.let { headers ->
-                        headers.forEach { (key, value) ->
-                            connection.setRequestProperty(key, value.toString())
+                        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                            headers?.forEach { (key, value) ->
+                                setRequestProperty(key, value.toString())
+                            }
+                            connectTimeout = timeout
+                            readTimeout = timeout
                         }
-                    }
 
-                    connection.connectTimeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000
-                    connection.readTimeout = (options?.get("timeout") as? Number)?.toInt() ?: 30000 // Also set read timeout
-                    connection.connect()
+                        connection.connect()
+                        val contentLength = connection.contentLength.toLong()
+                        val input = BufferedInputStream(connection.inputStream)
+                        val tempFile = File("${modelFile.absolutePath}.temp")
 
-                    val contentLength = connection.contentLength.toLong()
-                    val input = BufferedInputStream(connection.inputStream)
-                    val tempFile = File(modelFile.absolutePath + ".temp")
-                    val output = FileOutputStream(tempFile)
+                        try {
+                            FileOutputStream(tempFile).use { output ->
+                                val buffer = ByteArray(8192)
+                                var total: Long = 0
+                                var lastUpdate = System.currentTimeMillis()
 
-                    val buffer = ByteArray(8192)
-                    var total: Long = 0
-                    var count: Int
-                    var lastUpdateTime = System.currentTimeMillis()
+                                while (isActive) {
+                                    val count = input.read(buffer)
+                                    if (count == -1) break
 
-                    while (input.read(buffer).also { count = it } != -1) {
-                        if (isActive.not()) {
-                            Log.d(TAG, "downloadModel: Download for $modelName cancelled during transfer.")
-                            output.close()
+                                    total += count
+                                    output.write(buffer, 0, count)
+
+                                    // Throttled progress updates
+                                    if (System.currentTimeMillis() - lastUpdate > 200 || total == contentLength) {
+                                        lastUpdate = System.currentTimeMillis()
+                                        val progress = if (contentLength > 0) total.toDouble() / contentLength else 0.0
+                                        sendEvent("downloadProgress", mapOf(
+                                            "modelName" to modelName,
+                                            "status" to "downloading",
+                                            "bytesDownloaded" to total,
+                                            "totalBytes" to contentLength,
+                                            "progress" to progress
+                                        ))
+                                    }
+                                }
+                            }
+
+                            // Finalize download
+                            if (isActive) {
+                                if (modelFile.exists()) modelFile.delete()
+                                tempFile.renameTo(modelFile)
+                                sendEvent("downloadProgress", mapOf(
+                                    "modelName" to modelName,
+                                    "status" to "completed",
+                                    "progress" to 1.0
+                                ))
+                                promise.resolve(true)
+                            }
+                        } finally {
                             input.close()
-                            tempFile.delete() // Clean up temp file
+                            if (tempFile.exists()) tempFile.delete()
+                        }
+                    } catch (e: Exception) {
+                        if (isActive) {  // Only report errors if not cancelled
+                            Log.e(TAG, "Download failed", e)
                             sendEvent("downloadProgress", mapOf(
                                 "modelName" to modelName,
-                                "url" to url,
-                                "status" to "cancelled"
+                                "status" to "error",
+                                "error" to (e.message ?: "Unknown error")
                             ))
-                            withContext(Dispatchers.Main) { promise.resolve(false) } // Resolve false on cancellation
-                            return@launch
+                            promise.reject("DOWNLOAD_FAILED", e.message, e)
                         }
-
-                        total += count
-                        output.write(buffer, 0, count)
-
-                        // Send progress updates, throttled to avoid too many events
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastUpdateTime > 200 || total == contentLength) { // Every 200ms or on completion
-                            lastUpdateTime = currentTime
-                            val progress = if (contentLength > 0) total.toDouble() / contentLength.toDouble() else 0.0
-                            sendEvent("downloadProgress", mapOf(
-                                "modelName" to modelName,
-                                "url" to url,
-                                "bytesDownloaded" to total,
-                                "totalBytes" to contentLength,
-                                "progress" to progress,
-                                "status" to "downloading"
-                            ))
+                    } finally {
+                        synchronized(activeDownloads) {
+                            if (activeDownloads[modelName] == this) {
+                                activeDownloads.remove(modelName)
+                            }
                         }
                     }
+                }
 
-                    // Close streams
-                    output.flush()
-                    output.close()
-                    input.close()
-
-                    // Rename temp file to final file
-                    if (modelFile.exists()) {
-                        modelFile.delete()
+                // Track the job
+                activeDownloads[modelName] = downloadJob
+                downloadJob.invokeOnCompletion {
+                    synchronized(activeDownloads) {
+                        if (activeDownloads[modelName] == downloadJob) {
+                            activeDownloads.remove(modelName)
+                        }
                     }
-                    tempFile.renameTo(modelFile)
-
-                    Log.d(TAG, "downloadModel: Download for $modelName completed successfully.")
-                    sendEvent("downloadProgress", mapOf(
-                        "modelName" to modelName,
-                        "url" to url,
-                        "bytesDownloaded" to modelFile.length(),
-                        "totalBytes" to modelFile.length(),
-                        "progress" to 1.0,
-                        "status" to "completed"
-                    ))
-
-                    withContext(Dispatchers.Main) {
-                        promise.resolve(true)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "downloadModel: Download failed for $modelName: ${e.message}", e)
-                    // Notify error
-                    sendEvent("downloadProgress", mapOf(
-                        "modelName" to modelName,
-                        "url" to url,
-                        "status" to "error",
-                        "error" to (e.message ?: "Unknown download error")
-                    ))
-                    withContext(Dispatchers.Main) {
-                        promise.reject("DOWNLOAD_FAILED", e.message ?: "Unknown download error", e)
-                    }
-                } finally {
-                    activeDownloads.remove(modelName)
-                    Log.d(TAG, "downloadModel: Cleanup for $modelName download.")
                 }
             }
-            activeDownloads[modelName] = downloadJob
-            activeJobs.add(downloadJob)
-            downloadJob.invokeOnCompletion { activeJobs.remove(downloadJob) }
         }
 
         // Cancel download
         AsyncFunction("cancelDownload") { modelName: String, promise: Promise ->
-            val job = activeDownloads[modelName]
-            if (job != null && job.isActive) {
-                job.cancel() // Cancel the coroutine
-                activeDownloads.remove(modelName)
-                Log.d(TAG, "cancelDownload: Download for $modelName cancelled by request.")
-                sendEvent("downloadProgress", mapOf(
-                    "modelName" to modelName,
-                    "status" to "cancelled"
-                ))
-                promise.resolve(true)
-            } else {
-                Log.d(TAG, "cancelDownload: No active download for $modelName to cancel.")
-                promise.resolve(false) // No active download to cancel
+            synchronized(activeDownloads) {
+                val job = activeDownloads[modelName]
+
+                when {
+                    job == null -> {
+                        Log.d(TAG, "cancelDownload: No download exists for $modelName")
+                        promise.resolve(false)
+                    }
+                    !job.isActive -> {
+                        Log.d(TAG, "cancelDownload: Download for $modelName already completed/failed")
+                        activeDownloads.remove(modelName) // Cleanup stale entry
+                        promise.resolve(false)
+                    }
+                    else -> {
+                        job.cancel("User requested cancellation").also {
+                            activeDownloads.remove(modelName)
+                            Log.d(TAG, "cancelDownload: Successfully cancelled $modelName")
+                            sendEvent("downloadProgress", mapOf(
+                                "modelName" to modelName,
+                                "status" to "cancelled"
+                            ))
+                            promise.resolve(true)
+                        }
+                    }
+                }
             }
         }
 
         // Create model from downloaded file
         AsyncFunction("createModelFromDownloaded") { modelName: String, maxTokens: Int?, topK: Int?, temperature: Double?, randomSeed: Int?, multiModal: Boolean?, promise: Promise ->
+            val handle = synchronized(this) { nextHandle++ }
+
             val job = moduleCoroutineScope.launch(Dispatchers.IO) {
                 try {
                     val modelFile = getModelFile(modelName)
@@ -1704,7 +1870,8 @@ class LingoproMultimodalModule : Module() {
                         return@launch
                     }
 
-                    val handle = createModelInternal(
+                    createModelInternal(
+                        handle,
                         modelFile.absolutePath,
                         maxTokens ?: 1024,
                         topK ?: 40,
@@ -1722,8 +1889,22 @@ class LingoproMultimodalModule : Module() {
                     withContext(Dispatchers.Main) { promise.reject("MODEL_LOAD_FAILED", e.message ?: "Unknown error", e) }
                 }
             }
-            activeJobs.add(job)
-            job.invokeOnCompletion { activeJobs.remove(job) }
+
+            synchronized(activeJobs) {
+                activeJobs[handle] = job
+            }
+
+            job.invokeOnCompletion { exception ->
+                synchronized(activeJobs) {
+                    if (activeJobs[handle] == job) {
+                        activeJobs.remove(handle)
+                    }
+                }
+                if (exception is CancellationException) {
+                    promise.reject("CANCELLED", "Operation cancelled", exception)
+                }
+            }
         }
     }
+
 }

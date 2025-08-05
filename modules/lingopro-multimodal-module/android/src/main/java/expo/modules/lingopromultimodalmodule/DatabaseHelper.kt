@@ -14,6 +14,14 @@ import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 import android.database.DatabaseUtils
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 
 data class Word(
     val id: Long,
@@ -32,7 +40,7 @@ data class SrsCard(
     val id: Long,
     val wordId: Long,
     val language: String,
-    val dueDate: String,
+    val dueDate: String, // Stored as ISO 8601 string
     val interval: Int,
     val repetitions: Int,
     val easeFactor: Float,
@@ -171,6 +179,37 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
 
     }
 
+    @Synchronized
+    fun safeInitialize(): Boolean {
+        return try {
+            readableDatabase.close() // Close immediately after check
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Database initialization check failed", e)
+            false
+        }
+    }
+
+    @Synchronized
+    fun isDatabaseValid(): Boolean {
+        return try {
+            readableDatabase.let { db ->
+                val requiredTables = arrayOf(TABLE_WORDS, TABLE_SRS_CARDS, TABLE_SRS_REVIEWS)
+                val allTablesExist = requiredTables.all { table ->
+                    db.rawQuery(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        arrayOf(table)
+                    ).use { it.count > 0 }
+                }
+                allTablesExist && db.version == DATABASE_VERSION
+            }
+        } catch (e: Exception) {
+            false
+        } finally {
+            readableDatabase.close() // Ensure it's closed
+        }
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(CREATE_WORDS_TABLE)
         db.execSQL(CREATE_SRS_CARDS_TABLE)
@@ -190,12 +229,72 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         db.setForeignKeyConstraintsEnabled(true)
     }
 
-    // A more robust and safe approach to database operations using a try-with-resources block
-    private fun <T> safeDatabaseRead(operation: (SQLiteDatabase) -> T): T? {
-        return try {
-            this.readableDatabase.use { db ->
-                operation(db)
+    @Synchronized
+    fun forceInitializeDatabase(): Boolean = try {
+        writableDatabase.let { db ->
+            db.beginTransaction()
+            try {
+                // Drop all tables
+                listOf(TABLE_SRS_REVIEWS, TABLE_SRS_CARDS, TABLE_WORDS).forEach { table ->
+                    db.execSQL("DROP TABLE IF EXISTS $table")
+                }
+
+                // Recreate schema
+                onCreate(db)
+
+                db.setTransactionSuccessful()
+                true
+            } finally {
+                db.endTransaction()
             }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Force initialization failed", e)
+        false
+    }
+
+    @Synchronized
+    fun isDatabaseInitialized(): Boolean = try {
+        readableDatabase.let { db ->
+            val requiredTables = arrayOf(TABLE_WORDS, TABLE_SRS_CARDS, TABLE_SRS_REVIEWS)
+            requiredTables.all { table ->
+                db.rawQuery(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    arrayOf(table)
+                ).use { cursor -> cursor.count > 0 }
+            } && db.version >= DATABASE_VERSION
+        }
+    } catch (e: Exception) {
+        false
+    } finally {
+        readableDatabase.close()
+    }
+
+    // Add this for safer operations
+    @Synchronized
+    fun safeDatabaseOperation(block: (SQLiteDatabase) -> Unit): Boolean {
+        return try {
+            writableDatabase.let { db ->
+                db.beginTransaction()
+                try {
+                    block(db)
+                    db.setTransactionSuccessful()
+                    true
+                } finally {
+                    db.endTransaction()
+                }
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+
+    // A more robust and safe approach to database operations using a try-with-resources block
+    // This now takes the db instance to avoid closing the main connection
+    private fun <T> safeDatabaseRead(db: SQLiteDatabase, operation: (SQLiteDatabase) -> T): T? {
+        return try {
+            operation(db)
         } catch (e: SQLiteException) {
             Log.e(TAG, "Database read error", e)
             null
@@ -203,11 +302,10 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     // A more robust and safe approach to database operations using a try-with-resources block
-    private fun <T> safeDatabaseWrite(operation: (SQLiteDatabase) -> T): T? {
+    // This now takes the db instance to avoid closing the main connection
+    private fun <T> safeDatabaseWrite(db: SQLiteDatabase, operation: (SQLiteDatabase) -> T): T? {
         return try {
-            this.writableDatabase.use { db ->
-                operation(db)
-            }
+            operation(db)
         } catch (e: SQLiteException) {
             Log.e(TAG, "Database write error", e)
             null
@@ -215,7 +313,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     private fun <T> withTransaction(operation: (SQLiteDatabase) -> T): T? {
-        return safeDatabaseWrite { db ->
+        return safeDatabaseWrite(this.writableDatabase) { db -> // Pass writableDatabase
             db.beginTransaction()
             try {
                 val result = operation(db)
@@ -232,25 +330,25 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
 
     private inline fun <T> Cursor.mapToList(transform: (Cursor) -> T): List<T> {
         val list = mutableListOf<T>()
-        this.use {
-            while (it.moveToNext()) {
-                list.add(transform(it))
-            }
+        // The .use { } is already handled by the caller (e.g., db.rawQuery(...).use { ... })
+        while (this.moveToNext()) {
+            list.add(transform(this))
         }
         return list
     }
 
-    private fun parseWordFromCursor(cursor: Cursor): Word {
-        val idIndex = cursor.getColumnIndexOrThrow(COLUMN_ID)
-        val languageIndex = cursor.getColumnIndexOrThrow(COLUMN_LANGUAGE)
-        val wordIndex = cursor.getColumnIndexOrThrow(COLUMN_WORD)
-        val meaningIndex = cursor.getColumnIndexOrThrow(COLUMN_MEANING)
-        val writingIndex = cursor.getColumnIndexOrThrow(COLUMN_WRITING)
-        val wordTypeIndex = cursor.getColumnIndexOrThrow(COLUMN_WORD_TYPE)
-        val category1Index = cursor.getColumnIndexOrThrow(COLUMN_CATEGORY_1)
-        val category2Index = cursor.getColumnIndex(COLUMN_CATEGORY_2)
-        val phoneticsIndex = cursor.getColumnIndex(COLUMN_PHONETICS)
-        val tagsIndex = cursor.getColumnIndex(COLUMN_TAGS)
+    // Updated parseWordFromCursor to accept a prefix for aliased columns
+    private fun parseWordFromCursor(cursor: Cursor, prefix: String = ""): Word {
+        val idIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_ID)
+        val languageIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_LANGUAGE)
+        val wordIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WORD)
+        val meaningIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_MEANING)
+        val writingIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WRITING)
+        val wordTypeIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WORD_TYPE)
+        val category1Index = cursor.getColumnIndexOrThrow(prefix + COLUMN_CATEGORY_1)
+        val category2Index = cursor.getColumnIndex(prefix + COLUMN_CATEGORY_2)
+        val phoneticsIndex = cursor.getColumnIndex(prefix + COLUMN_PHONETICS)
+        val tagsIndex = cursor.getColumnIndex(prefix + COLUMN_TAGS)
 
         val tags = try {
             if (!cursor.isNull(tagsIndex)) {
@@ -279,22 +377,23 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         )
     }
 
-    private fun parseSrsCardFromCursor(cursor: Cursor): SrsCard {
-        val cardIdIndex = cursor.getColumnIndexOrThrow(COLUMN_CARD_ID)
-        val wordIdIndex = cursor.getColumnIndexOrThrow(COLUMN_WORD_ID)
-        val languageIndex = cursor.getColumnIndexOrThrow(COLUMN_LANGUAGE)
-        val dueDateIndex = cursor.getColumnIndexOrThrow(COLUMN_DUE_DATE)
-        val intervalIndex = cursor.getColumnIndexOrThrow(COLUMN_INTERVAL)
-        val repetitionsIndex = cursor.getColumnIndexOrThrow(COLUMN_REPETITIONS)
-        val easeFactorIndex = cursor.getColumnIndexOrThrow(COLUMN_EASE_FACTOR)
-        val isBuriedIndex = cursor.getColumnIndexOrThrow(COLUMN_IS_BURIED)
-        val deckLevelIndex = cursor.getColumnIndexOrThrow(COLUMN_DECK_LEVEL)
+    // Updated parseSrsCardFromCursor to accept a prefix for aliased columns
+    private fun parseSrsCardFromCursor(cursor: Cursor, prefix: String = ""): SrsCard {
+        val cardIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_CARD_ID)
+        val wordIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WORD_ID)
+        val languageIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_LANGUAGE)
+        val dueDateIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DUE_DATE)
+        val intervalIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_INTERVAL)
+        val repetitionsIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_REPETITIONS)
+        val easeFactorIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_EASE_FACTOR)
+        val isBuriedIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_IS_BURIED)
+        val deckLevelIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DECK_LEVEL)
 
         return SrsCard(
             id = cursor.getLong(cardIdIndex),
             wordId = cursor.getLong(wordIdIndex),
             language = cursor.getString(languageIndex),
-            dueDate = cursor.getString(dueDateIndex),
+            dueDate = cursor.getString(dueDateIndex), // Expecting ISO 8601 string
             interval = cursor.getInt(intervalIndex),
             repetitions = cursor.getInt(repetitionsIndex),
             easeFactor = cursor.getFloat(easeFactorIndex),
@@ -329,80 +428,69 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         db.insert(TABLE_WORDS, null, values)
     }
 
-    fun bulkInsertCards(
-        words: List<Word>,
-        deckLevel: String
-    ): List<SrsCard> = withTransaction<List<SrsCard>> { db ->
-        words.mapNotNull { wordData ->
-            try {
-                Log.d(TAG, "Processing word: ${wordData.word}")
-
-                // 1. Insert Word
+    // Corrected bulkInsertCards function to return Pair<SrsCard, Word>
+    fun bulkInsertCards(wordsToInsert: List<Word>, deckLevel: String): List<Pair<SrsCard, Word>> {
+        val insertedCardsAndWords = mutableListOf<Pair<SrsCard, Word>>()
+        val db = this.writableDatabase
+        db.beginTransaction()
+        try {
+            for (wordToInsert in wordsToInsert) {
+                // 1. Insert the word into the words table
                 val wordValues = ContentValues().apply {
-                    put(COLUMN_LANGUAGE, wordData.language)
-                    put(COLUMN_WORD, wordData.word)
-                    put(COLUMN_MEANING, wordData.meaning)
-                    put(COLUMN_WRITING, wordData.writing)
-                    put(COLUMN_WORD_TYPE, wordData.wordType)
-                    put(COLUMN_CATEGORY_1, wordData.category1)
-                    put(COLUMN_CATEGORY_2, wordData.category2 ?: "")
-                    put(COLUMN_PHONETICS, wordData.phonetics ?: "")
-                    put(COLUMN_TAGS, try {
-                        JSONArray(wordData.tags ?: emptyList<String>()).toString()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to serialize tags for ${wordData.word}", e)
-                        "[]"
-                    })
+                    put(COLUMN_LANGUAGE, wordToInsert.language)
+                    put(COLUMN_WORD, wordToInsert.word)
+                    put(COLUMN_MEANING, wordToInsert.meaning)
+                    put(COLUMN_PHONETICS, wordToInsert.phonetics)
+                    put(COLUMN_WRITING, wordToInsert.writing)
+                    put(COLUMN_WORD_TYPE, wordToInsert.wordType)
+                    put(COLUMN_CATEGORY_1, wordToInsert.category1)
+                    put(COLUMN_CATEGORY_2, wordToInsert.category2)
+                    put(COLUMN_TAGS, JSONArray(wordToInsert.tags).toString()) // Store tags as JSON array string
                 }
-
-                val wordId = db.insert(TABLE_WORDS, null, wordValues).also { id ->
-                    if (id == -1L) Log.e(TAG, "FAILED to insert word: ${wordData.word}")
-                    else Log.d(TAG, "Inserted word ID: $id")
-                }
-
+                val wordId = db.insert(TABLE_WORDS, null, wordValues)
                 if (wordId == -1L) {
-                    Log.e(TAG, "Word insertion failed - skipping card")
-                    return@mapNotNull null
+                    Log.e(TAG, "Failed to insert word: ${wordToInsert.word}")
+                    continue
                 }
+                Log.d(TAG, "Inserted word ID: $wordId")
 
-                // 2. Insert Card
+                // 2. Create and insert the corresponding SRS card
                 val cardValues = ContentValues().apply {
                     put(COLUMN_WORD_ID, wordId)
-                    put(COLUMN_LANGUAGE, wordData.language)
-                    put(COLUMN_DUE_DATE, calculateDueDate(INITIAL_INTERVAL))
+                    put(COLUMN_LANGUAGE, wordToInsert.language)
+                    put(COLUMN_DUE_DATE, Calendar.getInstance().toIso8601()) // Store as ISO 8601 string
                     put(COLUMN_INTERVAL, INITIAL_INTERVAL)
-                    put(COLUMN_EASE_FACTOR, 2.5f)
+                    put(COLUMN_REPETITIONS, 0)
+                    put(COLUMN_EASE_FACTOR, 2.5f) // Use float literal
+                    put(COLUMN_IS_BURIED, 0)
                     put(COLUMN_DECK_LEVEL, deckLevel)
                 }
-
-                val cardId = db.insert(TABLE_SRS_CARDS, null, cardValues).also { id ->
-                    if (id == -1L) Log.e(TAG, "FAILED to insert card for word $wordId")
-                    else Log.d(TAG, "Inserted card ID: $id")
-                }
-
+                val cardId = db.insert(TABLE_SRS_CARDS, null, cardValues)
                 if (cardId == -1L) {
-                    // Clean up orphaned word
+                    Log.e(TAG, "Failed to insert SRS card for word ID: $wordId")
                     db.delete(TABLE_WORDS, "$COLUMN_ID=?", arrayOf(wordId.toString()))
-                    Log.e(TAG, "Card insertion failed - deleted word $wordId")
-                    return@mapNotNull null
+                    continue
                 }
+                Log.d(TAG, "Inserted card ID: $cardId")
 
-                // 3. Retrieve full card
-                getCard(db, cardId)?.also { card ->
-                    Log.d(TAG, "Successfully created card ${card.id} for ${wordData.word}")
-                } ?: run {
-                    Log.e(TAG, "Failed to retrieve created card $cardId")
-                    null
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception processing ${wordData.word}", e)
-                null
+                val newCard = SrsCard(
+                    id = cardId,
+                    wordId = wordId,
+                    language = wordToInsert.language,
+                    dueDate = Calendar.getInstance().toIso8601(), // Consistent with storage
+                    interval = INITIAL_INTERVAL,
+                    repetitions = 0,
+                    easeFactor = 2.5f,
+                    isBuried = false,
+                    deckLevel = deckLevel
+                )
+                insertedCardsAndWords.add(Pair(newCard, wordToInsert.copy(id = wordId)))
             }
-        }.also { results ->
-            Log.d(TAG, "Bulk insert completed. Success: ${results.size}/${words.size}")
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
-    } ?: emptyList<SrsCard>().also {
-        Log.e(TAG, "Transaction failed entirely!")
+        return insertedCardsAndWords
     }
 
     fun generateContextualContent(words: List<String>, language: String, topic: String): Pair<String, String> {
@@ -412,13 +500,13 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         )
     }
 
-    fun getAllWords(): List<Word> = safeDatabaseRead { db ->
+    fun getAllWords(): List<Word> = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(TABLE_WORDS, null, null, null, null, null, "$COLUMN_TIMESTAMP DESC").use { cursor ->
             cursor.mapToList { parseWordFromCursor(it) }
         }
     } ?: emptyList()
 
-    fun getWordsByLanguage(language: String): List<Word> = safeDatabaseRead { db ->
+    fun getWordsByLanguage(language: String): List<Word> = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(
             TABLE_WORDS,
             null,
@@ -430,7 +518,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getCardsByDeckLevel(deckLevel: String): List<SrsCard> = safeDatabaseRead { db ->
+    fun getCardsByDeckLevel(deckLevel: String): List<SrsCard> = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(
             TABLE_SRS_CARDS,
             null,
@@ -443,7 +531,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     } ?: emptyList()
 
     // DatabaseHelper.kt
-    fun getDistinctDeckLevels(): List<String> = safeDatabaseRead { db ->
+    fun getDistinctDeckLevels(): List<String> = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(
             true,
             TABLE_SRS_CARDS,
@@ -459,17 +547,17 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getTotalCardCount(): Long = safeDatabaseRead { db ->
+    fun getTotalCardCount(): Long = safeDatabaseRead(this.readableDatabase) { db ->
         DatabaseUtils.queryNumEntries(db, TABLE_SRS_CARDS)
     } ?: 0
 
-    fun getReviewStats(days: Int = 30): List<ReviewStat> = safeDatabaseRead { db ->
-        val timeThreshold = System.currentTimeMillis() - (days * 24L * 60 * 60 * 1000)
+    fun getReviewStats(days: Int = 30): List<ReviewStat> = safeDatabaseRead(this.readableDatabase) { db ->
+        val timeThreshold = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -days) }.timeInMillis
 
         // Join with SRS cards table to get interval and ease factor
         db.rawQuery("""
         SELECT 
-            date(r.$COLUMN_REVIEW_DATE/1000, 'unixepoch') as day, 
+            strftime('%Y-%m-%d', r.$COLUMN_REVIEW_DATE) as day, 
             COUNT(*) as review_count,
             AVG(c.$COLUMN_EASE_FACTOR) as avg_ease,
             AVG(c.$COLUMN_INTERVAL) as avg_interval
@@ -490,7 +578,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getWordById(id: Long): Word? = safeDatabaseRead { db ->
+    fun getWordById(id: Long): Word? = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(
             TABLE_WORDS,
             null,
@@ -507,19 +595,26 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun getNounsByCategory(language: String, category1: String): List<Word> = safeDatabaseRead { db ->
-        db.query(
-            TABLE_WORDS,
-            null,
-            "$COLUMN_LANGUAGE = ? AND $COLUMN_WORD_TYPE = ? AND $COLUMN_CATEGORY_1 = ?",
-            arrayOf(language, "noun", category1),
-            null, null, "$COLUMN_TIMESTAMP DESC"
-        ).use { cursor ->
-            cursor.mapToList { parseWordFromCursor(it) }
-        }
-    } ?: emptyList()
+    @Synchronized
+    fun getNounsByCategory(language: String, category1: String): List<Word> {
+        return safeDatabaseRead(this.readableDatabase) { db ->
+            db.query(
+                TABLE_WORDS,
+                null,
+                "$COLUMN_LANGUAGE = ? AND $COLUMN_WORD_TYPE = ? AND $COLUMN_CATEGORY_1 = ?",
+                arrayOf(language, "noun", category1),
+                null, null, "$COLUMN_TIMESTAMP DESC"
+            ).use { cursor ->
+                mutableListOf<Word>().apply {
+                    while (cursor.moveToNext()) {
+                        parseWordFromCursor(cursor)?.let { add(it) }
+                    }
+                }
+            }
+        } ?: emptyList()
+    }
 
-    fun getWordsBySubcategory(language: String, category2: String): List<Word> = safeDatabaseRead { db ->
+    fun getWordsBySubcategory(language: String, category2: String): List<Word> = safeDatabaseRead(this.readableDatabase) { db ->
         db.query(
             TABLE_WORDS,
             null,
@@ -531,7 +626,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getWordsByTag(language: String, tag: String): List<Word> = safeDatabaseRead { db ->
+    fun getWordsByTag(language: String, tag: String): List<Word> = safeDatabaseRead(this.readableDatabase) { db ->
         db.rawQuery("""
             SELECT * FROM $TABLE_WORDS
             WHERE $COLUMN_LANGUAGE = ? AND $COLUMN_TAGS LIKE ?
@@ -546,7 +641,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         newMeaning: String? = null,
         newPhonetics: String? = null,
         newTags: List<String>? = null
-    ): Boolean = safeDatabaseWrite { db ->
+    ): Boolean = safeDatabaseWrite(this.writableDatabase) { db ->
         val values = ContentValues().apply {
             newMeaning?.let { put(COLUMN_MEANING, it) }
             newPhonetics?.let { put(COLUMN_PHONETICS, it) }
@@ -555,7 +650,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         db.update(TABLE_WORDS, values, "$COLUMN_ID = ?", arrayOf(id.toString())) > 0
     } ?: false
 
-    fun deleteWord(id: Long): Boolean = safeDatabaseWrite { db ->
+    fun deleteWord(id: Long): Boolean = safeDatabaseWrite(this.writableDatabase) { db ->
         db.delete(TABLE_WORDS, "$COLUMN_ID = ?", arrayOf(id.toString())) > 0
     } ?: false
 
@@ -629,6 +724,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             db.insert(TABLE_SRS_REVIEWS, null, ContentValues().apply {
                 put(COLUMN_CARD_ID, cardId)
                 put(COLUMN_QUALITY, quality)
+                put(COLUMN_REVIEW_DATE, Calendar.getInstance().toIso8601()) // Store review date as ISO 8601
             })
 
             val (newInterval, newEase) = calculateSM2Update(
@@ -651,75 +747,49 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun getDueCards(language: String, limit: Int): List<DueCardWithWord> = safeDatabaseRead { db ->
+    fun getDueCards(language: String, limit: Int): List<DueCardWithWord> = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
         SELECT
             c.$COLUMN_CARD_ID as card_id,
-            c.$COLUMN_WORD_ID,
-            c.$COLUMN_LANGUAGE,
-            c.$COLUMN_DUE_DATE,
-            c.$COLUMN_INTERVAL,
-            c.$COLUMN_REPETITIONS,
-            c.$COLUMN_EASE_FACTOR,
-            c.$COLUMN_IS_BURIED,
-            c.$COLUMN_DECK_LEVEL,
+            c.$COLUMN_WORD_ID as card_word_id,
+            c.$COLUMN_LANGUAGE as card_language,
+            c.$COLUMN_DUE_DATE as card_due_date,
+            c.$COLUMN_INTERVAL as card_interval,
+            c.$COLUMN_REPETITIONS as card_repetitions,
+            c.$COLUMN_EASE_FACTOR as card_ease_factor,
+            c.$COLUMN_IS_BURIED as card_is_buried,
+            c.$COLUMN_DECK_LEVEL as card_deck_level,
             w.$COLUMN_ID as word_id,
             w.$COLUMN_LANGUAGE as word_language,
-            w.$COLUMN_WORD,
-            w.$COLUMN_MEANING,
-            w.$COLUMN_WRITING,
-            w.$COLUMN_WORD_TYPE,
-            w.$COLUMN_CATEGORY_1,
-            w.$COLUMN_CATEGORY_2,
-            w.$COLUMN_PHONETICS,
-            w.$COLUMN_TAGS
+            w.$COLUMN_WORD as word_word,
+            w.$COLUMN_MEANING as word_meaning,
+            w.$COLUMN_WRITING as word_writing,
+            w.$COLUMN_WORD_TYPE as word_word_type,
+            w.$COLUMN_CATEGORY_1 as word_category_1,
+            w.$COLUMN_CATEGORY_2 as word_category_2,
+            w.$COLUMN_PHONETICS as word_phonetics,
+            w.$COLUMN_TAGS as word_tags
         FROM $TABLE_SRS_CARDS c
         INNER JOIN $TABLE_WORDS w ON c.$COLUMN_WORD_ID = w.$COLUMN_ID
         WHERE c.$COLUMN_LANGUAGE = ?
-        AND c.$COLUMN_DUE_DATE <= datetime('now')
+        AND c.$COLUMN_DUE_DATE <= strftime('%Y-%m-%dT%H:%M:%S', 'now') -- Compare ISO 8601 strings
+        AND c.$COLUMN_IS_BURIED = 0
         ORDER BY c.$COLUMN_DUE_DATE ASC
         LIMIT ?
     """.trimIndent()
         db.rawQuery(query, arrayOf(language, limit.toString())).use { cursor ->
             cursor.mapToList {
-                val srsCard = parseSrsCardFromCursor(it)
-                val word = parseWordFromCursor(it)
+                val srsCard = parseSrsCardFromCursor(it, "card_") // Pass prefix for card columns
+                val word = parseWordFromCursor(it, "word_")     // Pass prefix for word columns
                 DueCardWithWord(srsCard, word)
             }
         }
     } ?: emptyList()
 
     // --- Analytics and Learning Module Operations ---
-    // This function was missing and has been re-added.
-    fun forceInitializeDatabase(): Boolean = withTransaction { db ->
-        try {
-            db.execSQL("DROP TABLE IF EXISTS $TABLE_SRS_REVIEWS")
-            db.execSQL("DROP TABLE IF EXISTS $TABLE_SRS_CARDS")
-            db.execSQL("DROP TABLE IF EXISTS $TABLE_WORDS")
-            onCreate(db)
-            // Corrected to call the no-argument version of isDatabaseInitialized
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Force initialize failed", e)
-            false
-        }
-    } ?: false
-
-    // This function was missing and has been re-added.
-    fun isDatabaseInitialized(): Boolean = safeDatabaseRead { db ->
-        val tables = arrayOf(TABLE_WORDS, TABLE_SRS_CARDS, TABLE_SRS_REVIEWS)
-        tables.all { tableName ->
-            db.rawQuery(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='$tableName'",
-                null
-            ).use { cursor ->
-                cursor.count > 0
-            }
-        }
-    } ?: false
 
 
-    fun getWordCountByCategory(language: String, category: String): Int = safeDatabaseRead { db ->
+    fun getWordCountByCategory(language: String, category: String): Int = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
             SELECT COUNT(*) FROM $TABLE_WORDS
             WHERE $COLUMN_LANGUAGE = ? AND $COLUMN_CATEGORY_1 = ?
@@ -729,7 +799,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: 0
 
-    fun getPopularCategories(limit: Int): List<String> = safeDatabaseRead { db ->
+    fun getPopularCategories(limit: Int): List<String> = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
             SELECT $COLUMN_CATEGORY_1 FROM $TABLE_WORDS
             GROUP BY $COLUMN_CATEGORY_1
@@ -741,11 +811,11 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getRecommendedTopics(language: String): List<String> = safeDatabaseRead { db ->
+    fun getRecommendedTopics(language: String): List<String> = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
             SELECT $COLUMN_CATEGORY_1
             FROM $TABLE_WORDS
-            WHERE $COLUMN_LANGUAGE = ? AND $COLUMN_TIMESTAMP >= date('now', '-30 days')
+            WHERE $COLUMN_LANGUAGE = ? AND $COLUMN_TIMESTAMP >= strftime('%Y-%m-%d %H:%M:%S', 'now', '-30 days')
             GROUP BY $COLUMN_CATEGORY_1
             ORDER BY COUNT(*) DESC
             LIMIT 3
@@ -755,7 +825,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getWeakCategories(language: String): List<String> = safeDatabaseRead { db ->
+    fun getWeakCategories(language: String): List<String> = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
             SELECT w.$COLUMN_CATEGORY_1
             FROM $TABLE_SRS_REVIEWS r
@@ -771,7 +841,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         }
     } ?: emptyList()
 
-    fun getExistingTopics(language: String, limit: Int): List<String> = safeDatabaseRead { db ->
+    fun getExistingTopics(language: String, limit: Int): List<String> = safeDatabaseRead(this.readableDatabase) { db ->
         val query = """
             SELECT $COLUMN_CATEGORY_1 FROM $TABLE_WORDS
             WHERE $COLUMN_LANGUAGE = ?
