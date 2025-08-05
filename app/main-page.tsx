@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Icon from 'react-native-vector-icons/Ionicons';
 
 
 interface UserPreferences {
@@ -156,8 +157,9 @@ export default function MainPageScreen() {
         <View style={styles.header}>
           <Text style={styles.greeting}>Hi, you are learning</Text>
           <TouchableOpacity style={styles.languageDisplay} onPress={handleChangeLanguage}>
-            <Text style={styles.currentLanguage}>{selectedLanguage || 'Not Selected'}</Text>
-            <Text style={styles.dropdownIcon}>⌄</Text>
+            <Text style={styles.currentLanguage}>{ String(selectedLanguage).charAt(0).toUpperCase() + String(selectedLanguage).slice(1)|| 'Not Selected'}</Text>
+<Icon name="chevron-down-outline" size={15} style={styles.dropdownIcon} />
+
           </TouchableOpacity>
         </View>
 
@@ -290,7 +292,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   currentLanguage: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#007AFF', // Blue color for the language
   },
