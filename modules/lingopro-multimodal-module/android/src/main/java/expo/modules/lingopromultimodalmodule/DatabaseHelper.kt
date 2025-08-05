@@ -380,28 +380,37 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
 
     // Updated parseSrsCardFromCursor to accept a prefix for aliased columns
     private fun parseSrsCardFromCursor(cursor: Cursor, prefix: String = ""): SrsCard {
-        val cardIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_CARD_ID)
-        val wordIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WORD_ID)
-        val languageIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_LANGUAGE)
-        val dueDateIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DUE_DATE)
-        val intervalIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_INTERVAL)
-        val repetitionsIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_REPETITIONS)
-        val easeFactorIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_EASE_FACTOR)
-        val isBuriedIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_IS_BURIED)
-        val deckLevelIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DECK_LEVEL)
+        return try {
+            val cardIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_CARD_ID)
+            val wordIdIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_WORD_ID)
+            val languageIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_LANGUAGE)
+            val dueDateIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DUE_DATE)
+            val intervalIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_INTERVAL)
+            val repetitionsIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_REPETITIONS)
+            val easeFactorIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_EASE_FACTOR)
+            val isBuriedIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_IS_BURIED)
+            val deckLevelIndex = cursor.getColumnIndexOrThrow(prefix + COLUMN_DECK_LEVEL)
 
-        return SrsCard(
-            id = cursor.getLong(cardIdIndex),
-            wordId = cursor.getLong(wordIdIndex),
-            language = cursor.getString(languageIndex),
-            dueDate = cursor.getString(dueDateIndex), // Expecting ISO 8601 string
-            interval = cursor.getInt(intervalIndex),
-            repetitions = cursor.getInt(repetitionsIndex),
-            easeFactor = cursor.getFloat(easeFactorIndex),
-            isBuried = cursor.getInt(isBuriedIndex) == 1,
-            deckLevel = cursor.getString(deckLevelIndex)
-        )
+            val srsCard = SrsCard(
+                id = cursor.getLong(cardIdIndex),
+                wordId = cursor.getLong(wordIdIndex),
+                language = cursor.getString(languageIndex),
+                dueDate = cursor.getString(dueDateIndex),
+                interval = cursor.getInt(intervalIndex),
+                repetitions = cursor.getInt(repetitionsIndex),
+                easeFactor = cursor.getFloat(easeFactorIndex),
+                isBuried = cursor.getInt(isBuriedIndex) == 1,
+                deckLevel = cursor.getString(deckLevelIndex) ?: ""
+            )
+
+            Log.d(TAG, "Parsed SrsCard OK: $srsCard")
+            srsCard
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing SrsCard from cursor", e)
+            throw e
+        }
     }
+
 
     // --- CRUD Words Operations ---
     fun insertWord(
@@ -768,7 +777,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         val currentTime = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val query = """
         SELECT
-            c.$COLUMN_CARD_ID as card_id,
+            c.$COLUMN_CARD_ID as card_card_id,
             c.$COLUMN_WORD_ID as card_word_id,
             c.$COLUMN_LANGUAGE as card_language,
             c.$COLUMN_DUE_DATE as card_due_date,
@@ -802,8 +811,8 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         db.rawQuery(query, arrayOf(language, currentTime, limit.toString())).use { cursor ->
             Log.d(TAG, "getDueCards Cursor count: ${cursor.count}")
             cursor.mapToList {
-                val srsCard = parseSrsCardFromCursor(it)
-                val word = parseWordFromCursor(it)
+                val srsCard = parseSrsCardFromCursor(it, "card_")
+                val word = parseWordFromCursor(it, "word_")
                 Log.d(TAG, "Fetched Due Card: ID=${srsCard.id}, DueDate=${srsCard.dueDate}, IsBuried=${srsCard.isBuried}, Word='${word.word}'")
                 DueCardWithWord(srsCard, word)
             }
