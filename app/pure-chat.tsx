@@ -1,12 +1,12 @@
 import { ChatHeader, InputMode, MessageInput, MessageList, ModelLoadingOverlay } from '@/components/chat';
 import { ChatMessage as ChatMessageType } from '@/components/chat/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AudioModule, AudioRecorder, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
+import { AudioModule, AudioRecorder, RecorderState, RecordingPresets, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from "expo-audio";
 import { router } from 'expo-router';
 import * as Speech from 'expo-speech';
-import { default as ExpoLlmMediapipe, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
+import { default as ExpoLlmMediapipe, default as LingoProMultimodal, NativeModuleSubscription, PartialResponseEventPayload } from 'lingopro-multimodal-module';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, BackHandler, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, BackHandler, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useModel } from './context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "./initial-page";
@@ -157,8 +157,8 @@ export default function ChatScreen() {
             fullResponseRef.current += char;
 
             if (seenClosingAI && !isSummarizing && !char.match(/\s/) && char !== '<') {
-                        setIsSummarizing(true);
-                      }
+              setIsSummarizing(true);
+            }
 
             // State machine logic
             switch (state) {
@@ -222,7 +222,7 @@ export default function ChatScreen() {
       streamingListenersRef.current.push(partialSub);
 
       const logSub = ExpoLlmMediapipe.addListener("logging", (ev) => {
-        console.log("[", ev.handle, "] ",ev.message)
+        console.log("[", ev.handle, "] ", ev.message)
       });
       streamingListenersRef.current.push(logSub);
 
@@ -421,7 +421,7 @@ export default function ChatScreen() {
       <ChatHeader
         title="AI Chat"
         onBack={handleBack}
-        // No rightComponents for tools toggle
+      // No rightComponents for tools toggle
       />
       <ModelLoadingOverlay isVisible={isLoadingModel} />
       <KeyboardAvoidingView
@@ -461,8 +461,8 @@ export default function ChatScreen() {
           onStartRecording={startRecording}
           onStopRecording={stopRecording}
           isPlayingAudio={isPlayingAudio}
-          onCancelAudio={handleCancelAudio}
-        />
+          onCancelAudio={handleCancelAudio} selectedImage={null} onImageSelect={function (): void {}}
+          onRemoveImage={function (): void { }} />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
