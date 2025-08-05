@@ -799,22 +799,15 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         Log.d(TAG, "getDueCards Query: $query")
         Log.d(TAG, "getDueCards Args: [language=$language, currentTime=$currentTime, limit=$limit]")
 
-        try {
+        db.rawQuery(query, arrayOf(language, currentTime, limit.toString())).use { cursor ->
+            Log.d(TAG, "getDueCards Cursor count: ${cursor.count}")
             cursor.mapToList {
-                for (i in 0 until it.columnCount) {
-                    Log.d(TAG, "Cursor Column: ${it.getColumnName(i)} = ${it.getString(i)}")
-                }
-
                 val srsCard = parseSrsCardFromCursor(it)
                 val word = parseWordFromCursor(it)
                 Log.d(TAG, "Fetched Due Card: ID=${srsCard.id}, DueDate=${srsCard.dueDate}, IsBuried=${srsCard.isBuried}, Word='${word.word}'")
                 DueCardWithWord(srsCard, word)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception while mapping cursor row", e)
-            throw e
         }
-
     } ?: emptyList()
 
     // --- Analytics and Learning Module Operations ---
