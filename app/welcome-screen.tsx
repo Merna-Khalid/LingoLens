@@ -1,8 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 import { Link, router } from 'expo-router'; // Import Link for navigation and router for direct navigation
 import React, { useEffect, useState } from 'react'; // Import useState and useEffect
-import { Image, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native'; // Import ActivityIndicator
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native'; // Import ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 
 const SELECTED_LANGUAGE_KEY = 'selected_language';
 const SELECTED_LEVEL_KEY = 'selected_level';
@@ -58,7 +58,7 @@ export default function WelcomeScreen() {
             style={styles.lingoLensIcon}
             accessibilityLabel="LingoLens Icon"
           />
-          <Text style={styles.lingoLensTitle}>LingoPro</Text>
+          <Text style={styles.lingoLensTitle}>LingoLens</Text>
         </View>
 
         <Link href="/select-languages" asChild>
