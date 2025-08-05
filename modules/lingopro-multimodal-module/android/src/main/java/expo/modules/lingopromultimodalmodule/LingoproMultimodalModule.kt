@@ -769,7 +769,20 @@ class LingoproMultimodalModule : Module() {
                 require(quality in 0..5) { "Quality must be between 0-5" }
 
                 dbHelper.logReview(cardId, quality)?.let { updatedCard ->
-                    promise.resolve(cardToJson(updatedCard))
+                    val jsonObject = cardToJson(updatedCard)
+
+                    // Convert JSONObject to Map<String, Any>
+                    val map = mutableMapOf<String, Any>()
+                    val keys = jsonObject.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val value = jsonObject.get(key)
+
+                        // If you expect nested objects/arrays, add recursive conversion here
+                        map[key] = value
+                    }
+
+                    promise.resolve(map)
                 } ?: run {
                     promise.reject(
                         "REVIEW_UPDATE_FAILED",
@@ -791,6 +804,7 @@ class LingoproMultimodalModule : Module() {
                 )
             }
         }
+
 
 
 
