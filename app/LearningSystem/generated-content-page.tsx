@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView, Modal, Alert } from 'react-native';
 import { AntDesign, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Speech from 'expo-speech';
 
 // Define types
 type Word = {
@@ -22,19 +24,36 @@ type Story = {
   translation: string;
 };
 
+// Language configuration
+const LANGUAGE_KEY = 'lingopro_selected_language';
+
+// Your provided language list with BCP 47 codes
+const languages = [
+  { id: 'spanish', flag: '🇪🇸', language: 'spanish', nativeLanguage: 'Español', code: 'es-ES' },
+  { id: 'french', flag: '🇫🇷', language: 'french', nativeLanguage: 'Français', code: 'fr-FR' },
+  { id: 'german', flag: '🇩🇪', language: 'german', nativeLanguage: 'Deutsch', code: 'de-DE' },
+  { id: 'italian', flag: '🇮🇹', language: 'italian', nativeLanguage: 'Italiano', code: 'it-IT' },
+  { id: 'japanese', flag: '🇯🇵', language: 'japanese', nativeLanguage: '日本語', code: 'ja-JP' },
+  { id: 'chinese', flag: '🇨🇳', language: 'chinese', nativeLanguage: '中文', code: 'zh-CN' },
+];
+
+
+const languageCodeMap = new Map(languages.map(lang => [lang.language, lang.code]));
+
 export default function GeneratedContentPage() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  // Parse parameters with proper type safety
   const [generatedWords, setGeneratedWords] = useState<Word[]>([]);
   const [generatedStory, setGeneratedStory] = useState<Story>({
     original: "",
     translation: ""
   });
 
-  // Initialize data from params - fixed version
-  React.useEffect(() => {
+  const [currentLanguageCode, setCurrentLanguageCode] = useState<string>('en-US'); // Default to English
+
+  // Initialize data from params and fetch stored language
+  useEffect(() => {
     try {
       if (params.generatedWords) {
         const words = typeof params.generatedWords === 'string'
@@ -52,14 +71,36 @@ export default function GeneratedContentPage() {
     } catch (e) {
       console.error("Failed to parse navigation params:", e);
     }
-  }, []);
+
+    // Fetch the stored language from AsyncStorage
+    const fetchStoredLanguage = async () => {
+      try {
+        const storedLanguageName = await AsyncStorage.getItem(LANGUAGE_KEY);
+        if (storedLanguageName) {
+          const mappedCode = languageCodeMap.get(storedLanguageName.toLowerCase());
+          if (mappedCode) {
+            setCurrentLanguageCode(mappedCode);
+            console.log(`TTS language set to: ${mappedCode} based on stored language: ${storedLanguageName}`);
+          } else {
+            console.warn(`No BCP 47 code found for stored language: ${storedLanguageName}. Using default.`);
+          }
+        } else {
+          console.log("No language stored in AsyncStorage. Using default 'en-US'.");
+        }
+      } catch (e) {
+        console.error("Failed to retrieve language from AsyncStorage:", e);
+      }
+    };
+
+    fetchStoredLanguage();
+  }, [params]);
 
   // State for modal
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedWord, setSelectedWord] = useState<Word | null>(null);
 
   // Word map for quick lookup
-  const generatedWordsMap = React.useMemo(() => {
+  const generatedWordsMap = useMemo(() => {
     return new Map(generatedWords.map(w => [w.word.toLowerCase(), w]));
   }, [generatedWords]);
 
@@ -91,10 +132,28 @@ export default function GeneratedContentPage() {
     );
   };
 
-  // Audio playback
-  const handlePlayAudio = () => {
+  const handlePlayAudio = async () => {
     if (selectedWord) {
-      Alert.alert("Play Audio", `Playing audio for: ${selectedWord.word}`);
+      try {
+        const langCodeToSpeak = languageCodeMap.get(selectedWord.language.toLowerCase()) || currentLanguageCode;
+        Speech.speak(selectedWord.word, { language: langCodeToSpeak });
+        console.log(`Successfully requested audio for word: ${selectedWord.word} in ${langCodeToSpeak}`);
+      } catch (e) {
+        console.error("Error playing audio for word:", e);
+        Alert.alert("Audio Error", `Failed to play audio for word: ${e.message}`);
+      }
+    }
+  };
+
+  const handlePlayStoryAudio = async () => {
+    if (generatedStory.original) {
+      try {
+        Speech.speak(generatedStory.original, { language: currentLanguageCode });
+        console.log(`Successfully requested audio for story in ${currentLanguageCode}`);
+      } catch (e) {
+        console.error("Error playing story audio:", e);
+        Alert.alert("Audio Error", `Failed to play story audio: ${e.message}`);
+      }
     }
   };
 
@@ -114,7 +173,12 @@ export default function GeneratedContentPage() {
         <Text style={styles.sectionTitle}>Contextual Story</Text>
         {generatedStory.original ? (
           <View style={styles.contentBlock}>
-            <Text style={styles.contentLabel}>Original:</Text>
+            <View style={styles.storyHeader}>
+              <Text style={styles.contentLabel}>Original:</Text>
+              <TouchableOpacity style={styles.storyAudioButton} onPress={handlePlayStoryAudio}>
+                <Ionicons name="volume-high" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
             {renderStory(generatedStory.original)}
             <Text style={styles.contentLabel}>Translation:</Text>
             <Text style={styles.storyText}>{generatedStory.translation}</Text>
@@ -150,7 +214,7 @@ export default function GeneratedContentPage() {
           style={styles.addButton}
           onPress={() => router.navigate('main-page')}
         >
-          <Text style={styles.addButtonText}>Add to Flashcards</Text>
+          <Text style={styles.addButtonText}>Go Home</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -248,11 +312,19 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 3,
   },
+  storyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   contentLabel: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 10,
     color: '#444',
+    marginRight: 10, // Space between label and button
+  },
+  storyAudioButton: {
+    padding: 5,
   },
   storyText: {
     fontSize: 16,

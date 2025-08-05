@@ -13,6 +13,17 @@ interface TopicPreview {
   exampleWords: string;
 }
 
+interface GeneratedContentResult {
+  cards: string; // JSON string of cards array
+  content: string;
+  translation: string;
+}
+
+interface CardWordPair {
+  card: SrsCard;
+  word: Word;
+}
+
 type Word = {
   id: number;
   language: string;
@@ -218,101 +229,107 @@ export default function LearningPage() {
 
   // --- HANDLE GENERATING CONTENT ---
   const handleGenerateContent = useCallback(async (topicToGenerate: string) => {
-      if (!isDbInitialized || !modelHandle) {
-        Alert.alert("Error", "System not ready");
+    if (!isDbInitialized || !modelHandle) {
+      Alert.alert("Error", "System not ready");
+      return;
+    }
+
+    const count = parseInt(numberOfCards, 10);
+    if (!topicToGenerate || isNaN(count) || count < 1 || count > 20) {
+      Alert.alert("Invalid Input", "Please enter 1-20 cards");
+      return;
+    }
+
+    setIsLoadingContent(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      // Type the result explicitly
+      const result = await LingoProMultimodal.generateTopicCards(
+        modelHandle,
+        Math.floor(Math.random() * 100000),
+        topicToGenerate,
+        selectedLanguage,
+        count,
+        "a1" // deckLevel
+      ) as {
+        cards: string; // JSON string
+        content: string;
+        translation: string;
+      };
+
+      if (!result?.cards || !result.content) {
+        Alert.alert("Error", "Failed to generate content. Please try again.");
         return;
       }
 
-      const count = parseInt(numberOfCards, 10);
-      if (!topicToGenerate || isNaN(count) || count < 1 || count > 20) {
-        Alert.alert("Invalid Input", "Please enter 1-20 cards");
-        return;
-      }
+      console.log('RAW RESULT:', JSON.stringify(result, null, 2));
 
-      setIsLoadingContent(true);
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
-
+      // Parse the cards JSON string with error handling
+      let cardsArray: Array<{ card: SrsCard; word: Word }>;
       try {
-        const result = await LingoProMultimodal.generateTopicCards(
-          modelHandle,
-          Math.floor(Math.random() * 100000),
-          topicToGenerate,
-          selectedLanguage,
-          count,
-          "a1" // deckLevel
-        ).catch(e => {
-          if (e.message.includes('Timeout')) {
-            Alert.alert('Timeout', 'Generation took too long');
-          } else {
-            Alert.alert('Error', 'Content generation failed');
-          }
-          console.error('Generation promise caught an error:', e);
-          return null;
-        });
-        console.log('After generating topic cars');
-
-        if (result === null || !result.cards) {
-          Alert.alert("Error", "Failed to generate content. Please try again.");
-          return;
-        }
-
-        console.log('RAW RESULT:', JSON.stringify(result, null, 2));
-
-        // CORRECTED: Access nested 'word' object from each item in result.cards
-        const wordsForDisplay: Word[] = result.cards
-          .filter((item: { card: SrsCard, word: Word }) => { // Type 'item' explicitly
-            if (!item || !item.word) { // Check if item or item.word is null/undefined
-              console.warn('Undefined card or word encountered in result.cards:', item);
-              return false;
-            }
-            if (item.word.id === undefined) { // Check ID on the nested word object
-              console.warn('Word missing ID:', item.word);
-              return false;
-            }
-            return true;
-          })
-          .map((item: { card: SrsCard, word: Word }) => ({ // Map from nested word object
-            id: item.word.id,
-            language: item.word.language,
-            word: item.word.word || "Generated Word",
-            meaning: item.word.meaning || "Generated Meaning",
-            writing: item.word.writing || item.word.word || "Generated Word",
-            wordType: item.word.wordType || "noun",
-            category1: item.word.category1, // Use category from word object if available
-            category2: item.word.category2,
-            tags: item.word.tags || [],
-            phonetics: item.word.phonetics || "",
-          }));
-
-        if (wordsForDisplay.length !== result.cards.length) {
-          console.warn(`Filtered ${result.cards.length - wordsForDisplay.length} invalid cards`);
-        }
-
-        const generatedStory = {
-          original: result.content,
-          translation: result.translation,
-        };
-
-        router.navigate({
-          pathname: 'LearningSystem/generated-content-page',
-          params: {
-            generatedWords: JSON.stringify(wordsForDisplay),
-            generatedStory: JSON.stringify(generatedStory),
-          },
-        });
-
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          Alert.alert("Error", "Failed to generate content");
-          console.error('Generation error:', error);
-        }
-      } finally {
-        setIsLoadingContent(false);
-        abortControllerRef.current = null;
-
+        cardsArray = JSON.parse(result.cards);
+      } catch (e) {
+        console.error('Failed to parse cards JSON:', e);
+        Alert.alert("Error", "Invalid data format received");
+        return;
       }
-    }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage]);
+
+      // Process words with proper type checking
+      const wordsForDisplay: Word[] = cardsArray
+        .filter((item): item is { card: SrsCard; word: Word } => {
+          if (!item?.word) {
+            console.warn('Undefined word encountered:', item);
+            return false;
+          }
+          return true;
+        })
+        .map(item => ({
+          id: item.word.id,
+          language: item.word.language,
+          word: item.word.word || "Generated Word",
+          meaning: item.word.meaning || "Generated Meaning",
+          writing: item.word.writing || item.word.word || "Generated Word",
+          wordType: item.word.wordType || "noun",
+          category1: item.word.category1 || topicToGenerate,
+          category2: item.word.category2,
+          tags: item.word.tags || [],
+          phonetics: item.word.phonetics || "",
+        }));
+
+      if (wordsForDisplay.length !== cardsArray.length) {
+        console.warn(`Filtered ${cardsArray.length - wordsForDisplay.length} invalid cards`);
+      }
+
+      // Navigate with validated data
+      router.navigate({
+        pathname: 'LearningSystem/generated-content-page',
+        params: {
+          generatedWords: JSON.stringify(wordsForDisplay),
+          generatedStory: JSON.stringify({
+            original: result.content,
+            translation: result.translation || "No translation available"
+          }),
+        },
+      });
+
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        Alert.alert(
+          "Error",
+          errorMessage.includes('Timeout')
+            ? 'Generation took too long'
+            : 'Content generation failed'
+        );
+        console.error('Generation error:', error);
+      }
+    } finally {
+      setIsLoadingContent(false);
+      abortControllerRef.current = null;
+    }
+  }, [isDbInitialized, modelHandle, numberOfCards, selectedLanguage]);
 
   // --- NEW FUNCTION TO HANDLE TOPIC SELECTION AND GENERATION ---
   const handleSelectTopic = useCallback((topic: string) => {

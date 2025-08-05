@@ -68,6 +68,7 @@ export default function App() {
     });
 
     const [selectedLanguage, setSelectedLanguage] = useState('English');
+    const [isLanguageLoaded, setIsLanguageLoaded] = useState(false);
     const [formErrors, setFormErrors] = useState({});
 
     useEffect(() => {
@@ -104,11 +105,18 @@ export default function App() {
 
     useEffect(() => {
         if (isDbInitialized) {
-            console.log("Database confirmed initialized. Loading user settings and fetching due cards.");
+            console.log("Database confirmed initialized. Loading user settings.");
             loadUserSettings();
-            fetchDueCards();
         }
     }, [isDbInitialized]);
+
+    useEffect(() => {
+        if (isDbInitialized && isLanguageLoaded && selectedLanguage) {
+            console.log(`Fetching due cards for language: ${selectedLanguage}`);
+            fetchDueCards();
+        }
+    }, [isDbInitialized, selectedLanguage, isLanguageLoaded]);
+
 
     const resetForm = () => {
         setNewWordData({
@@ -129,9 +137,19 @@ export default function App() {
     const loadUserSettings = async () => {
         try {
             const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
-            if (storedLanguage) setSelectedLanguage(storedLanguage);
+            if (storedLanguage) {
+                setSelectedLanguage(storedLanguage);
+                console.log(`User language loaded from AsyncStorage: ${storedLanguage}`);
+            } else {
+                console.log("No language found in AsyncStorage. Defaulting to English.");
+                setSelectedLanguage('English'); // Explicitly set default if nothing is stored
+            }
         } catch (error) {
             console.error('Failed to load user settings:', error);
+            // Fallback to default if loading fails
+            setSelectedLanguage('English');
+        } finally {
+            setIsLanguageLoaded(true); // Set this flag once loading is complete (success or failure)
         }
     };
 
@@ -145,7 +163,11 @@ export default function App() {
         try {
             const limit = 20;
             const dueCardsWithWordsJson = await LingoProMultimodal.getDueCards(selectedLanguage, limit);
+            console.log("Raw JSON from native module:", dueCardsWithWordsJson);
+
             const dueCardsWithWords: DueCardWithWord[] = JSON.parse(dueCardsWithWordsJson);
+
+
 
             if (!dueCardsWithWords || dueCardsWithWords.length === 0) {
                 setDueCardsCount(0);
@@ -155,8 +177,8 @@ export default function App() {
             } else {
                 setDueCardsCount(dueCardsWithWords.length);
                 const firstDueCard = dueCardsWithWords[0];
-                setCurrentCard(firstDueCard.card); // Access the nested card object
-                setCurrentWord(firstDueCard.word); // Access the nested word object
+                setCurrentCard(firstDueCard.card);
+                setCurrentWord(firstDueCard.word);
                 console.log("Fetched new card and word:", firstDueCard.word);
             }
 
@@ -378,7 +400,7 @@ export default function App() {
 
             {/* Bottom Navigation */}
             <View style={[styles.bottomNavigation, { paddingBottom: insets.bottom + 10 }]}>
-                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('srs-system')}>
+                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/all-cards')}>
                     <MaterialCommunityIcons name="cards-outline" size={24} color="#6200EE" />
                     <Text style={[styles.navText, { color: '#6200EE' }]}>Decks</Text>
                 </TouchableOpacity>
@@ -386,13 +408,9 @@ export default function App() {
                     <Ionicons name="book-outline" size={24} color="#888" />
                     <Text style={styles.navText}>Learn</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
+                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/stats')}>
                     <Ionicons name="bar-chart-outline" size={24} color="#888" />
                     <Text style={styles.navText}>Stats</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
-                    <Ionicons name="settings-outline" size={24} color="#888" />
-                    <Text style={styles.navText}>Settings</Text>
                 </TouchableOpacity>
             </View>
 

@@ -215,15 +215,6 @@ export default function MainPageScreen() {
             </View>
           </View>
 
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardIcon}>💬</Text>
-              <Text style={styles.cardTitle}>Chat</Text>
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeText}>New</Text>
-              </View>
-            </View>
-          </View>
         </View>
 
         <TouchableOpacity

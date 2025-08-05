@@ -22,6 +22,11 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import java.util.Locale
+import kotlinx.coroutines.withTimeoutOrNull
 
 
 private const val TAG = "LingoproMultimodal" // Changed TAG to match module name
@@ -651,15 +656,11 @@ class LingoproMultimodalModule : Module() {
             try {
                 when {
                     id == null -> {
-                        promise.resolve(null) // Explicitly resolve with null
+                        promise.resolve(null)
                     }
                     else -> {
                         val word = dbHelper.getWordById(id)
-                        if (word != null) {
-                            promise.resolve(wordToJson(word))
-                        } else {
-                            promise.resolve(null) // Resolve with null instead of rejecting
-                        }
+                        promise.resolve(word?.let { wordToJson(it).toString() } ?: null)
                     }
                 }
             } catch (e: Exception) {
@@ -731,16 +732,35 @@ class LingoproMultimodalModule : Module() {
                     throw IllegalArgumentException("Limit must be a positive integer")
                 }
                 // Fetch the list of combined card and word objects
+                Log.d(TAG, "Before")
                 val dueCardsWithWords = dbHelper.getDueCards(language, limit)
 
+                Log.d(TAG, "Fetched SRS cards $dueCardsWithWords")
                 // Serialize the list of combined objects to a JSON array
                 val jsonCardsWithWords = JSONArray(dueCardsWithWords.map { combinedData ->
                     dueCardWithWordToJson(combinedData)
                 }).toString()
-
+                Log.d(TAG, "Fetched SRS cards to string $jsonCardsWithWords")
                 promise.resolve(jsonCardsWithWords)
             } catch (e: Exception) {
                 promise.reject("FETCH_ERROR", "Failed to fetch due cards", e)
+            }
+        }
+
+        AsyncFunction("getAllSrsCards") { promise: Promise ->
+            moduleCoroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val allSrsCards = dbHelper.getAllSrsCards()
+                    val jsonArray = JSONArray().apply {
+                        allSrsCards.forEach { card ->
+                            put(cardToJson(card)) // Directly use the JSONObject
+                        }
+                    }
+                    promise.resolve(jsonArray.toString())
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to fetch SRS cards", e)
+                    promise.reject("FETCH_ERROR", "Failed to fetch cards: ${e.message}", e)
+                }
             }
         }
 
@@ -805,74 +825,39 @@ class LingoproMultimodalModule : Module() {
 
                     // A single prompt to generate words, the story, and the story's translation
                     val combinedPrompt = """
-                        SYSTEM PROMPT:
-                        You are a language learning assistant specializing in $language. Generate $count basic vocabulary words about "$topic" and create a short story using them.
-                        
-                        # INSTRUCTIONS
-                        1. VOCABULARY:
-                           - Generate $count words related to "$topic"
-                           - Format as JSON with exact structure:
-                             {
-                               "words": [
-                                 {
-                                   "word": "",        // $language word
-                                   "meaning": "",     // English translation
-                                   "phonetics": "",   // IPA pronunciation
-                                   "writing": "",     // How to write it
-                                   "wordType": "",    // noun/verb/adjective/etc
-                                   "tags": []         // Relevant categories
-                                 }
-                               ]
-                             }
-                        
-                        2. STORY REQUIREMENTS:
-                           - Use all generated words naturally
-                           - 3-5 paragraphs in $language
-                           - Simple sentences for beginners
-                           - Include dialogue when possible
-                        
-                        3. OUTPUT FORMAT:
-                        <Json>
-                        {/* EXACTLY the JSON structure above */}
-                        </Json>
-                        
-                        <Story>
-                        /* $language story here */
-                        </Story>
-                        
-                        <StoryTrans>
-                        /* English translation here */
-                        </StoryTrans>
-                        
-                        # EXAMPLE (German):
-                        <Json>
-                        {
-                          "words": [
+                        System:
+                            Generate $count basic $language vocabulary words about the topic "$topic". Also, write a short, simple story or dialogue in $language that uses these words.
+            
+                            Return the vocabulary as a JSON object inside <Json></Json> tags.
+                            Return the story in $language inside <Story></Story> tags.
+                            Return an English translation of the story inside <StoryTrans></StoryTrans> tags.
+            
+                            The JSON object should have a single key "words", which is an array of objects.
+                            Each object must contain the keys: "word", "meaning", "phonetics", "writing", "wordType", and "tags".
+                            
+                            The story should be a few paragraphs long and use the generated vocabulary.
+            
+                            Example format:
+                            <Json>
                             {
-                              "word": "Buch",
-                              "meaning": "book",
-                              "phonetics": "/buːx/",
-                              "writing": "Buch",
-                              "wordType": "noun",
-                              "tags": ["school", "objects"]
+                              "words": [
+                                {
+                                  "word": "hallo",
+                                  "meaning": "hello",
+                                  "phonetics": "/ˈhalo/",
+                                  "writing": "hallo",
+                                  "wordType": "greeting",
+                                  "tags": ["greeting", "beginner"]
+                                }
+                              ]
                             }
-                          ]
-                        }
-                        </Json>
-                        <Story>
-                        Anna sucht ihr Buch. "Mama, wo ist mein Buch?" fragt sie. 
-                        Das Buch liegt auf dem Tisch. "Danke, Mama!" sagt Anna.
-                        </Story>
-                        <StoryTrans>
-                        Anna looks for her book. "Mom, where is my book?" she asks.
-                        The book is on the table. "Thank you, Mom!" says Anna.
-                        </StoryTrans>
-                        
-                        # NOTES:
-                        - Prioritize common, useful words
-                        - Include varied word types (nouns/verbs/adjectives)
-                        - Make story contextually relevant to $topic
-                        - Ensure translations are 100% accurate
+                            </Json>
+                            <Story>
+                            Guten Tag! Ich bin Anna und das ist mein Buch. Ich lese gern.
+                            </Story>
+                            <StoryTrans>
+                            Good day! I am Anna and this is my book. I like to read.
+                            </StoryTrans>
             """.trimIndent()
 
                     val response = try {
@@ -880,16 +865,12 @@ class LingoproMultimodalModule : Module() {
                         model.generateResponse(requestId, combinedPrompt, "") { result ->
                             deferredResult.complete(result)
                         }
-                        withTimeout(500_000) {
-                            deferredResult.await()
-                        }
-                    } catch (e: TimeoutCancellationException) {
-                        promise.reject("TIMEOUT", "Generation took too long", e)
-                        return@launch
+                        deferredResult.await()
                     } catch (e: Exception) {
-                        promise.reject("LLM_ERROR", "Error during LLM response: ${e.message}", e)
+                        promise.reject("LLM_ERROR", "LLM generation failed: ${e.message}", e)
                         return@launch
                     }
+
 
                     val jsonRegex = "<Json>(.*?)</Json>".toRegex(RegexOption.DOT_MATCHES_ALL)
                     val storyRegex = "<Story>(.*?)</Story>".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -933,12 +914,14 @@ class LingoproMultimodalModule : Module() {
                     val cardsAndWords = dbHelper.bulkInsertCards(wordsToInsert, deckLevel)
 
                     promise.resolve(mapOf(
-                        "cards" to cardsAndWords.map { (srsCard, word) ->
-                            mapOf(
-                                "card" to cardToJson(srsCard),
-                                "word" to wordToJson(word)
-                            )
-                        },
+                        "cards" to JSONArray().apply {
+                            cardsAndWords.forEach { (srsCard, word) ->
+                                put(JSONObject().apply {
+                                    put("card", cardToJson(srsCard))
+                                    put("word", wordToJson(word))
+                                })
+                            }
+                        }.toString(), // Convert to JSON string
                         "content" to storyContent,
                         "translation" to storyTransContent
                     ))
@@ -1012,19 +995,15 @@ class LingoproMultimodalModule : Module() {
 
                         val response = try {
                             val deferredResult = CompletableDeferred<String>()
-                            model.generateResponse(requestId, prompt, "") { finalResult ->
-                                deferredResult.complete(finalResult)
+                            model.generateResponse(requestId, prompt, "") { result ->
+                                deferredResult.complete(result)
                             }
-                            withTimeout(500_000) { // Increased timeout for generation
-                                deferredResult.await()
-                            }
-                        } catch (e: TimeoutCancellationException) {
-                            Log.e(TAG, "LLM generation timed out", e)
-                            ""
+                            deferredResult.await()
                         } catch (e: Exception) {
-                            Log.e(TAG, "❌ Error during LLM response", e)
-                            ""
+                            promise.reject("LLM_ERROR", "LLM generation failed: ${e.message}", e)
+                            return@launch
                         }
+
 
                         val llmTopics = try {
                             JSONArray(response).let { array ->
@@ -1906,5 +1885,4 @@ class LingoproMultimodalModule : Module() {
             }
         }
     }
-
 }

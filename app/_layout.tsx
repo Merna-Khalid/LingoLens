@@ -64,6 +64,8 @@ export default function RootLayout() {
           <Stack.Screen name="LearningSystem/srs-system" options={{ headerShown: false }} />
           <Stack.Screen name="LearningSystem/learning-page" options={{ headerShown: false }} />
           <Stack.Screen name="LearningSystem/generated-content-page" options={{ headerShown: false }} />
+          <Stack.Screen name="LearningSystem/all-cards" options={{ headerShown: false }} />
+          <Stack.Screen name="LearningSystem/stats" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="auto" />
       </ModelProvider>

@@ -10,6 +10,7 @@ import android.util.Log
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -493,6 +494,22 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         return insertedCardsAndWords
     }
 
+    fun getAllSrsCards(): List<SrsCard> = safeDatabaseRead(this.readableDatabase) { db ->
+        val query = """
+            SELECT * FROM $TABLE_SRS_CARDS
+            ORDER BY $COLUMN_CARD_ID ASC
+        """.trimIndent()
+        Log.d(TAG, "getAllSrsCards Query: $query")
+        db.rawQuery(query, null).use { cursor ->
+            Log.d(TAG, "getAllSrsCards Cursor count: ${cursor.count}")
+            cursor.mapToList {
+                val card = parseSrsCardFromCursor(it)
+                Log.d(TAG, "Fetched All Card: ID=${card.id}, DueDate=${card.dueDate}, IsBuried=${card.isBuried}, Interval=${card.interval}, Reps=${card.repetitions}")
+                card
+            }
+        }
+    } ?: emptyList()
+
     fun generateContextualContent(words: List<String>, language: String, topic: String): Pair<String, String> {
         return Pair(
             "$topic dialogue:\n${words.joinToString(", ")}",
@@ -748,6 +765,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     fun getDueCards(language: String, limit: Int): List<DueCardWithWord> = safeDatabaseRead(this.readableDatabase) { db ->
+        val currentTime = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val query = """
         SELECT
             c.$COLUMN_CARD_ID as card_id,
@@ -772,18 +790,31 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
         FROM $TABLE_SRS_CARDS c
         INNER JOIN $TABLE_WORDS w ON c.$COLUMN_WORD_ID = w.$COLUMN_ID
         WHERE c.$COLUMN_LANGUAGE = ?
-        AND c.$COLUMN_DUE_DATE <= strftime('%Y-%m-%dT%H:%M:%S', 'now') -- Compare ISO 8601 strings
+        AND DATE(c.$COLUMN_DUE_DATE) <= DATE(?)
         AND c.$COLUMN_IS_BURIED = 0
         ORDER BY c.$COLUMN_DUE_DATE ASC
         LIMIT ?
     """.trimIndent()
-        db.rawQuery(query, arrayOf(language, limit.toString())).use { cursor ->
+
+        Log.d(TAG, "getDueCards Query: $query")
+        Log.d(TAG, "getDueCards Args: [language=$language, currentTime=$currentTime, limit=$limit]")
+
+        try {
             cursor.mapToList {
-                val srsCard = parseSrsCardFromCursor(it, "card_") // Pass prefix for card columns
-                val word = parseWordFromCursor(it, "word_")     // Pass prefix for word columns
+                for (i in 0 until it.columnCount) {
+                    Log.d(TAG, "Cursor Column: ${it.getColumnName(i)} = ${it.getString(i)}")
+                }
+
+                val srsCard = parseSrsCardFromCursor(it)
+                val word = parseWordFromCursor(it)
+                Log.d(TAG, "Fetched Due Card: ID=${srsCard.id}, DueDate=${srsCard.dueDate}, IsBuried=${srsCard.isBuried}, Word='${word.word}'")
                 DueCardWithWord(srsCard, word)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception while mapping cursor row", e)
+            throw e
         }
+
     } ?: emptyList()
 
     // --- Analytics and Learning Module Operations ---
