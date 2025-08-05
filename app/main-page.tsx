@@ -114,6 +114,11 @@ export default function MainPageScreen() {
     router.push('/camera-page'); // Navigate to the camera page
   };
 
+  const handleChatPress = () => {
+      router.push('/pure-chat'); // Navigate to the camera page
+    };
+
+
   const handleStartSession = () => {
     if (selectedLanguage && selectedLevel) {
       console.log(`Starting session for ${selectedLanguage} at ${selectedLevel} level.`);
@@ -228,9 +233,8 @@ export default function MainPageScreen() {
       </ScrollView>
 
       <View style={styles.bottomNavBar}>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={styles.navIcon}>🏠</Text>
-          <Text style={styles.navText}>Home</Text>
+        <TouchableOpacity style={styles.navItem} onPress={handleChatPress}>
+          <Text style={{ fontSize: 24 }}>💬</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItemCenter} onPress={handleCameraPress}>
           <Text style={styles.navIconCenter}>📸</Text>

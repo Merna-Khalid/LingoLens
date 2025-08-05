@@ -59,6 +59,7 @@ export default function RootLayout() {
           <Stack.Screen name="camera-page" options={{ headerShown: false }} />
           <Stack.Screen name="quick-session" options={{ headerShown: false }} />
           <Stack.Screen name="chat" options={{ headerShown: false }} />
+          <Stack.Screen name="pure-chat" options={{ headerShown: false }} />
           <Stack.Screen name="knowledge-interface" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" />
           <Stack.Screen name="LearningSystem/srs-system" options={{ headerShown: false }} />
