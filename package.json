@@ -14,6 +14,7 @@
     "@expo/config-plugins": "~10.1.1",
     "@expo/vector-icons": "^14.1.0",
     "@react-native-async-storage/async-storage": "2.1.2",
+    "@react-native-clipboard/clipboard": "^1.16.3",
     "@react-navigation/bottom-tabs": "^7.3.10",
     "@react-navigation/elements": "^2.3.8",
     "@react-navigation/native": "^7.1.6",
@@ -29,6 +30,7 @@
     "expo-haptics": "~14.1.4",
     "expo-image": "~2.3.2",
     "expo-image-manipulator": "~13.1.7",
+    "expo-image-picker": "~16.1.4",
     "expo-linking": "~7.1.7",
     "expo-network": "~7.1.5",
     "expo-router": "~5.1.3",
@@ -50,8 +52,7 @@
     "react-native-screens": "~4.11.1",
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "~0.20.0",
-    "react-native-webview": "13.13.5",
-    "expo-image-picker": "~16.1.4"
+    "react-native-webview": "13.13.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
