@@ -750,7 +750,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             db.insert(TABLE_SRS_REVIEWS, null, ContentValues().apply {
                 put(COLUMN_CARD_ID, cardId)
                 put(COLUMN_QUALITY, quality)
-                put(COLUMN_REVIEW_DATE, Calendar.getInstance().toIso8601()) // Store review date as ISO 8601
+                put(COLUMN_REVIEW_DATE, Calendar.getInstance().toIso8601())
             })
 
             val (newInterval, newEase) = calculateSM2Update(
@@ -761,8 +761,15 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             )
             val newRepetitions = if (quality < 3) 0 else card.repetitions + 1
 
+            // 👇 Adjust due date logic here:
+            val newDueDate = if (quality < 3) {
+                Calendar.getInstance().toIso8601() // show again immediately
+            } else {
+                calculateDueDate(newInterval)
+            }
+
             val values = ContentValues().apply {
-                put(COLUMN_DUE_DATE, calculateDueDate(newInterval))
+                put(COLUMN_DUE_DATE, newDueDate)
                 put(COLUMN_INTERVAL, newInterval)
                 put(COLUMN_EASE_FACTOR, newEase)
                 put(COLUMN_REPETITIONS, newRepetitions)
@@ -772,6 +779,7 @@ class DatabaseHelper private constructor(context: Context) : SQLiteOpenHelper(
             getCard(db, cardId)
         }
     }
+
 
     fun getDueCards(language: String, limit: Int): List<DueCardWithWord> = safeDatabaseRead(this.readableDatabase) { db ->
         val currentTime = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())

@@ -44,6 +44,7 @@ const LANGUAGE_KEY = 'lingopro_selected_language';
 const LEVEL_KEY = 'lingopro_selected_level';
 const PROGRESS_KEY = 'lingopro_language_progress';
 
+
 export default function App() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -192,6 +193,11 @@ export default function App() {
             setIsCardFlipped(false);
             setIsLoading(false);
         }
+    };
+
+    const getTodayKey = () => {
+      const today = new Date();
+      return today.toISOString().split('T')[0]; // e.g. "2025-08-05"
     };
 
     const handleLogReview = async (quality: number) => {
