@@ -401,17 +401,14 @@ export default function App() {
             {/* Bottom Navigation */}
             <View style={[styles.bottomNavigation, { paddingBottom: insets.bottom + 10 }]}>
                 <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/all-cards')}>
-                    <MaterialCommunityIcons name="cards-outline" size={24} color="#6200EE" />
-                    <Text style={[styles.navText, { color: '#6200EE' }]}>Decks</Text>
+                    <MaterialCommunityIcons name="cards-outline" size={24} color="#888" />
+                    <Text style={[styles.navText]}>All Cards</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/learning-page')}>
                     <Ionicons name="book-outline" size={24} color="#888" />
                     <Text style={styles.navText}>Learn</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/stats')}>
-                    <Ionicons name="bar-chart-outline" size={24} color="#888" />
-                    <Text style={styles.navText}>Stats</Text>
-                </TouchableOpacity>
+
             </View>
 
             {/* Add Word Modal */}

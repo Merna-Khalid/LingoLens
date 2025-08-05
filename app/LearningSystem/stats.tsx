@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, ScrollView, SafeAreaView } from 'react-native';
 import { AntDesign } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -18,6 +19,8 @@ interface StatsResult {
   }>;
 }
 
+const LANGUAGE_KEY = 'lingopro_selected_language';
+
 export default function Stats() {
   const router = useRouter();
   const [stats, setStats] = useState<StatsResult | null>(null);
@@ -30,7 +33,9 @@ export default function Stats() {
     setError(null);
     try {
       // Call the native module function to fetch statistics
-      const resultString: string = await LingoproMultimodal.fetchStats();
+      const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      const resultString: string = await LingoProMultimodal.fetchStats(storedLanguage);
+      console.log(resultString);
       const result: StatsResult = JSON.parse(resultString);
       setStats(result);
     } catch (e) {

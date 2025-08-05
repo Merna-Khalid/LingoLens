@@ -2,7 +2,7 @@ import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, BackHandler } from 'react-native';
+import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, BackHandler, KeyboardAvoidingView, Platform } from 'react-native';
 import LingoProMultimodal from 'lingopro-multimodal-module';
 import { useModel } from '../context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "../initial-page";
@@ -350,92 +350,98 @@ export default function LearningPage() {
         <View style={styles.badgePlaceholder} />
       </View>
 
-      <ScrollView style={styles.contentScrollView}>
-        {isLoadingModel || isLoadingContent ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#6200EE" />
-            <Text style={styles.loadingText}>
-              {isLoadingModel ? "Loading AI model..." : "Loading topics or generating content..."}
-            </Text>
-            {modelLoadError && !isModelLoaded && (
-              <View style={styles.modelNotLoadedContainer}>
-                <Text style={styles.modelNotLoadedText}>{modelLoadError}</Text>
-                <TouchableOpacity style={styles.retryButton} onPress={loadModel}>
-                  <Text style={styles.retryButtonText}>Retry Load Model</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        ) : (
-          <>
-            <Text style={styles.learningTitle}>Choose a Topic to Learn</Text>
-
-            {!isModelLoaded && !modelLoadError && (
-              <View style={styles.modelNotLoadedContainer}>
-                <Text style={styles.modelNotLoadedText}>AI Model is initializing. Please wait...</Text>
-              </View>
-            )}
-
-            {isModelLoaded && recommendedTopics.priorityTopics.length > 0 && (
-              <View style={styles.topicSection}>
-                <Text style={styles.topicSectionTitle}>Priority Topics</Text>
-                {recommendedTopics.priorityTopics.map((item, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
-                    onPress={() => handleSelectTopic(item.topic)}
-                  >
-                    <Text style={styles.topicButtonText}>{item.topic}</Text>
-                    <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0} // Adjust this offset as needed
+      >
+        <ScrollView contentContainerStyle={styles.contentScrollView}>
+          {isLoadingModel || isLoadingContent ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#6200EE" />
+              <Text style={styles.loadingText}>
+                {isLoadingModel ? "Loading AI model..." : "Loading topics or generating content..."}
+              </Text>
+              {modelLoadError && !isModelLoaded && (
+                <View style={styles.modelNotLoadedContainer}>
+                  <Text style={styles.modelNotLoadedText}>{modelLoadError}</Text>
+                  <TouchableOpacity style={styles.retryButton} onPress={loadModel}>
+                    <Text style={styles.retryButtonText}>Retry Load Model</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-            )}
+                </View>
+              )}
+            </View>
+          ) : (
+            <>
+              <Text style={styles.learningTitle}>Choose a Topic to Learn</Text>
 
-            {isModelLoaded && recommendedTopics.otherTopics.length > 0 && (
-              <View style={styles.topicSection}>
-                <Text style={styles.topicSectionTitle}>Other Topics</Text>
-                {recommendedTopics.otherTopics.map((item, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
-                    onPress={() => handleSelectTopic(item.topic)}
-                  >
-                    <Text style={styles.topicButtonText}>{item.topic}</Text>
-                    <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+              {!isModelLoaded && !modelLoadError && (
+                <View style={styles.modelNotLoadedContainer}>
+                  <Text style={styles.modelNotLoadedText}>AI Model is initializing. Please wait...</Text>
+                </View>
+              )}
+
+              {isModelLoaded && recommendedTopics.priorityTopics.length > 0 && (
+                <View style={styles.topicSection}>
+                  <Text style={styles.topicSectionTitle}>Priority Topics</Text>
+                  {recommendedTopics.priorityTopics.map((item, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
+                      onPress={() => handleSelectTopic(item.topic)}
+                    >
+                      <Text style={styles.topicButtonText}>{item.topic}</Text>
+                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {isModelLoaded && recommendedTopics.otherTopics.length > 0 && (
+                <View style={styles.topicSection}>
+                  <Text style={styles.topicSectionTitle}>Other Topics</Text>
+                  {recommendedTopics.otherTopics.map((item, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[styles.topicButton, selectedTopic === item.topic && styles.selectedTopicButton]}
+                      onPress={() => handleSelectTopic(item.topic)}
+                    >
+                      <Text style={styles.topicButtonText}>{item.topic}</Text>
+                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {isModelLoaded && (
+                <View style={styles.customTopicSection}>
+                  <Text style={styles.topicSectionTitle}>Or Enter Your Own Topic</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Custom Topic (e.g., 'Space Exploration')"
+                    value={customTopic}
+                    onChangeText={(text) => {
+                      setCustomTopic(text);
+                      setSelectedTopic(null);
+                    }}
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Number of cards (1-20)"
+                    keyboardType="numeric"
+                    value={numberOfCards}
+                    onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))}
+                    maxLength={2}
+                  />
+                  <TouchableOpacity style={styles.generateButton} onPress={() => handleGenerateContent(customTopic)} disabled={isLoadingContent || !isModelLoaded}>
+                    <Text style={styles.generateButtonText}>Generate Content</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {isModelLoaded && (
-              <View style={styles.customTopicSection}>
-                <Text style={styles.topicSectionTitle}>Or Enter Your Own Topic</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Custom Topic (e.g., 'Space Exploration')"
-                  value={customTopic}
-                  onChangeText={(text) => {
-                    setCustomTopic(text);
-                    setSelectedTopic(null);
-                  }}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Number of cards (1-20)"
-                  keyboardType="numeric"
-                  value={numberOfCards}
-                  onChangeText={(text) => setNumberOfCards(text.replace(/[^0-9]/g, ''))}
-                  maxLength={2}
-                />
-                <TouchableOpacity style={styles.generateButton} onPress={() => handleGenerateContent(customTopic)} disabled={isLoadingContent || !isModelLoaded}>
-                  <Text style={styles.generateButtonText}>Generate Content</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
+                </View>
+              )}
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -445,6 +451,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f8f8',
     paddingTop: 40,
+  },
+  keyboardAvoidingView: {
+    flex: 1, // Ensure it takes up available space
   },
   header: {
     flexDirection: 'row',
@@ -464,9 +473,10 @@ const styles = StyleSheet.create({
     width: 24,
   },
   contentScrollView: {
-    flex: 1,
+    flexGrow: 1, // Allows content to grow and be scrollable
     paddingHorizontal: 20,
     paddingTop: 20,
+    paddingBottom: 50, // Add padding at the bottom to ensure content isn't hidden by keyboard
   },
   loadingContainer: {
     flex: 1,
