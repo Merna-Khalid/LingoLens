@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView, Modal, Alert } from 'react-native';
 import { AntDesign, Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Define types
 type Word = {
@@ -93,7 +93,7 @@ export default function GeneratedContentPage() {
     };
 
     fetchStoredLanguage();
-  }, [params]);
+  }, [currentLanguageCode]);
 
   // State for modal
   const [modalVisible, setModalVisible] = useState(false);
