@@ -1,7 +1,7 @@
 # LingoLens: Multimodal Language Learning Companion
 
 ---
-![LingoLens Logo](./assets/LingoLens/LingoLensLogo.png)
+<img src="./assets/LingoLens/LingoLensLogo.png" alt="LingoLens Logo" width="200"/>
 
 ## Project Overview
 
@@ -34,12 +34,12 @@ Model files on Hugging Face:
 * **Interactive Session Preview**:
     * Presents a dedicated screen for immediate review of flashcards.
     * SRS for improved learning and AI model integration.
-    * ![QuickSession QuickSession](./assets/LingoLens/flashcard1.jpg)
+    * <img src="./assets/LingoLens/flashcard1.jpg" alt="Quick session" width="300"/>
 
 * **AI-Powered Multimodal Chat**:
     * **Text Chat**: Facilitates text-based conversations with the AI regarding the captured image. Utilizes **Gemma 3n** for intelligent text generation.
     * **Image Input**: Model is able to analyze images provided by the user to extract words and input them into the database to be used as flashcards.
-    * ![QuickSession QuickSession](./assets/LingoLens/quick-session-chat.jpg)
+    * <img src="./assets/LingoLens/quick-session-chat.jpg" alt="Quick session chat" width="300"/>
 
 ---
 
@@ -53,7 +53,8 @@ LingoLens differentiates itself from traditional language learning applications 
 * **Spaced Repetition System (SRS)**: An intelligent SRS personalizes content, adapts to your performance, and effectively reinforces challenging material through multimodal, context-rich reviews, optimizing retention.
 
 This comprehensive feature set addresses the limitations of conventional language learning apps by providing personalized, context-rich, and immediately applicable language learning experiences.
-[QuickSession QuickSession](./assets/LingoLens/contextual-story.jpg)
+
+<img src="./assets/LingoLens/contextual-story.jpg" alt="Contextual story" width="300"/>
 ---
 
 ## Technologies Utilized
