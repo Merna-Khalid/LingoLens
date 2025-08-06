@@ -1352,13 +1352,11 @@ class LingoproMultimodalModule : Module() {
                         only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                         please don't forget the closing tags
                         All answers by you should be in between one of the four tags <AI></AI>, <ImageSum></ImageSum>, <sum></sum>, <Tools></Tools> (sequentially and not nested inside each other)!.
-                        Answer format ->
+                        Answer format in order ->
                         <AI>your answer here</AI>
                         <ImageSum> image desciption here.... </ImageSum>
                         <sum>he said this, you said that as sumamry</sum>
                         <Tools>[...]</Tools>
-                        
-                        BAD FORMAT -> <AI>your answer here <ImageSum>...</ImageSum></AI>
                     """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1514,6 +1512,39 @@ class LingoproMultimodalModule : Module() {
 
         }
 
+        fun fixMalformedJson(input: String): String {
+            var json = input.trim()
+
+            // Step 1: Try parsing to detect if it's already valid
+            try {
+                com.google.gson.JsonParser.parseString(json)
+                return json // already valid
+            } catch (_: Exception) {
+                // continue to try fixing
+            }
+
+            // Step 2: Remove trailing unmatched braces
+            while (json.isNotEmpty()) {
+                try {
+                    com.google.gson.JsonParser.parseString(json)
+                    return json
+                } catch (_: Exception) {
+                    // Remove one trailing } or ] and try again
+                    if (json.endsWith("}")) {
+                        json = json.dropLast(1)
+                    } else if (json.endsWith("]")) {
+                        json = json.dropLast(1)
+                    } else {
+                        break
+                    }
+                }
+            }
+
+            throw IllegalArgumentException("Could not fix malformed JSON.")
+        }
+
+
+
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
             // Cancel any existing jobs for this handle
             synchronized(activeJobs) {
@@ -1527,18 +1558,16 @@ class LingoproMultimodalModule : Module() {
                 System: 
                     You are a language learning assistant with access to specific tools when allowed. Tools allowed? $useTools
                     return your direct answer to the user request in between (if beginner is asking return an english and learning language mix, increase the amount of learning language as the user goes up in levels) <AI></AI>
-                    if you received an image return the description of the image in English in between <ImageSum></ImageSum> after you are done with the <AI></AI> tag, if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
+                    if you received an image return the description of the image in English in between <ImageSum></ImageSum> after you are done with the <AI></AI> tag and closed the tage with <AI> tag with </AI>, do not nest any tags inside each other. if not then just return previous image summary (even if empty) <ImageSum></ImageSum>
                     Return the summary of history and the new user query in between tags (no image description here, use the ImageSum tag for this) <sum></sum>
                     only if tools are allowed return the tools selected in between <Tools></Tools> in the format of <Tools>[{"name": "tool_name", "parameters": {"parameter1": "bla bla", "parameter2": "bla bla"} }]</Tools> if you don't want to use any tools or it is not allowed return <Tools>[]</Tools>.
                     please don't forget the closing tags
                     All answers by you should be in between one of the four tags <AI></AI>, <ImageSum></ImageSum>, <sum></sum>, <Tools></Tools> (sequentially and not nested inside each other)!.
-                    Answer format ->
+                    Answer format in order ->
                     <AI>your answer here</AI>
                     <ImageSum> image desciption here.... </ImageSum>
                     <sum>he said this, you said that as sumamry</sum>
                     <Tools>[...]</Tools>
-                    
-                    BAD FORMAT -> <AI>your answer here <ImageSum>...</ImageSum></AI>
             """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1597,7 +1626,8 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Tools raw response: $toolsRawResponse")
 
                         val (_, _, _, toolsContent) = extractPromptTags(toolsRawResponse)
-                        toolsJsonList = toolsToJsonList(toolsContent)
+                        val jsonCleaned = fixMalformedJson(toolsContent)
+                        toolsJsonList = toolsToJsonList(jsonCleaned)
                         Log.d(TAG, "Parsed tools: $toolsJsonList")
                     }
 
@@ -1610,13 +1640,9 @@ class LingoproMultimodalModule : Module() {
 
                     val finalPrompt = """
                 $fixedSystemPrompt
-                
                 ${if (modelHistoryContext.isNotEmpty()) "chat history context -> $modelHistoryContext" else ""}
-                
                 ${if (imageHistorySummary.isNotEmpty()) "image given by user before summary> $imageHistorySummary" else ""}
-                
                 ${if (toolsResultData.isNotEmpty()) "Tool results -> ${toolsResultData.joinToString()}" else ""}
-                
                 User:
                 # Current Query -> $prompt
             """.trimIndent()
