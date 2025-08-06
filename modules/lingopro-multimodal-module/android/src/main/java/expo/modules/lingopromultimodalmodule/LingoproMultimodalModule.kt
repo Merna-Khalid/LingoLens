@@ -1512,38 +1512,59 @@ class LingoproMultimodalModule : Module() {
 
         }
 
-        fun fixMalformedJson(input: String): String {
+        fun fixToValidJson(input: String, isArray: Boolean): String {
             var json = input.trim()
 
-            // Step 1: Try parsing to detect if it's already valid
-            try {
-                com.google.gson.JsonParser.parseString(json)
-                return json // already valid
-            } catch (_: Exception) {
-                // continue to try fixing
+            // Sanitize common mistakes: repeated commas, missing brackets
+            json = json
+                .replace(Regex(",\\s*([}\\]])"), "$1") // remove trailing commas in objects/arrays
+                .replace(Regex("([\\[{]),+"), "$1")    // remove multiple commas after brackets
+
+            // Bracket balancing
+            val openBraces = json.count { it == '{' }
+            val closeBraces = json.count { it == '}' }
+            val openBrackets = json.count { it == '[' }
+            val closeBrackets = json.count { it == ']' }
+
+            if (openBraces > closeBraces) {
+                json += "}".repeat(openBraces - closeBraces)
+            } else if (closeBraces > openBraces) {
+                json = json.dropLast(closeBraces - openBraces)
             }
 
-            // Step 2: Remove trailing unmatched braces
+            if (openBrackets > closeBrackets) {
+                json += "]".repeat(openBrackets - closeBrackets)
+            } else if (closeBrackets > openBrackets) {
+                json = json.dropLast(closeBrackets - openBrackets)
+            }
+
+            // Trim invalid tailing characters
             while (json.isNotEmpty()) {
                 try {
-                    com.google.gson.JsonParser.parseString(json)
-                    return json
-                } catch (_: Exception) {
-                    // Remove one trailing } or ] and try again
-                    if (json.endsWith("}")) {
-                        json = json.dropLast(1)
-                    } else if (json.endsWith("]")) {
-                        json = json.dropLast(1)
-                    } else {
-                        break
-                    }
+                    if (isArray) JSONArray(json) else JSONObject(json)
+                    return json // valid
+                } catch (_: JSONException) {
+                    json = json.dropLast(1).trimEnd()
                 }
             }
 
-            throw IllegalArgumentException("Could not fix malformed JSON.")
+            return input
         }
 
+        fun fixMalformedJson(input: String): String {
+            val trimmed = input.trim()
 
+            // Try JSON Object
+            if (trimmed.startsWith("{")) {
+                return fixToValidJson(trimmed, isArray = false)
+            }
+
+            // Try JSON Array
+            if (trimmed.startsWith("[")) {
+                return fixToValidJson(trimmed, isArray = true)
+            }
+            return input
+        }
 
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
             // Cancel any existing jobs for this handle
