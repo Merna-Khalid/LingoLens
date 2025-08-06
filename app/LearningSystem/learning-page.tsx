@@ -378,7 +378,7 @@ export default function LearningPage() {
                       onPress={() => handleSelectTopic(item.topic)}
                     >
                       <Text style={styles.topicButtonText}>{item.topic}</Text>
-                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords}</Text>
+                      <Text style={styles.topicButtonDetails}>Words: {item.wordCount} | Ex: {item.exampleWords.join(', ')}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
