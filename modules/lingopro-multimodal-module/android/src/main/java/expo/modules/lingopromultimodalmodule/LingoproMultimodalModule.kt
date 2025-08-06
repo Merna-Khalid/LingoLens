@@ -1512,58 +1512,39 @@ class LingoproMultimodalModule : Module() {
 
         }
 
-        fun fixToValidJson(input: String, isArray: Boolean): String {
-            var json = input.trim()
+        fun fixExtraBrackets(input: String): String {
+            val stack = mutableListOf<Char>()
+            val result = StringBuilder()
 
-            // Sanitize common mistakes: repeated commas, missing brackets
-            json = json
-                .replace(Regex(",\\s*([}\\]])"), "$1") // remove trailing commas in objects/arrays
-                .replace(Regex("([\\[{]),+"), "$1")    // remove multiple commas after brackets
-
-            // Bracket balancing
-            val openBraces = json.count { it == '{' }
-            val closeBraces = json.count { it == '}' }
-            val openBrackets = json.count { it == '[' }
-            val closeBrackets = json.count { it == ']' }
-
-            if (openBraces > closeBraces) {
-                json += "}".repeat(openBraces - closeBraces)
-            } else if (closeBraces > openBraces) {
-                json = json.dropLast(closeBraces - openBraces)
-            }
-
-            if (openBrackets > closeBrackets) {
-                json += "]".repeat(openBrackets - closeBrackets)
-            } else if (closeBrackets > openBrackets) {
-                json = json.dropLast(closeBrackets - openBrackets)
-            }
-
-            // Trim invalid tailing characters
-            while (json.isNotEmpty()) {
-                try {
-                    if (isArray) JSONArray(json) else JSONObject(json)
-                    return json // valid
-                } catch (_: JSONException) {
-                    json = json.dropLast(1).trimEnd()
+            for (c in input) {
+                when (c) {
+                    '{', '[' -> {
+                        stack.add(c)
+                        result.append(c)
+                    }
+                    '}', ']' -> {
+                        if (stack.isNotEmpty() &&
+                            ((c == '}' && stack.last() == '{') ||
+                                    (c == ']' && stack.last() == '['))) {
+                            stack.removeAt(stack.lastIndex)
+                            result.append(c)
+                        }
+                        // Else: skip extra closing bracket
+                    }
+                    else -> result.append(c)
                 }
             }
 
-            return json
-        }
-
-        fun fixMalformedJson(input: String): String {
-            val trimmed = input.trimIndent()
-
-            // Try JSON Object
-            if (trimmed.startsWith("{")) {
-                return fixToValidJson(trimmed, isArray = false)
+            // Add missing closing brackets
+            stack.reversed().forEach {
+                result.append(when (it) {
+                    '{' -> '}'
+                    '[' -> ']'
+                    else -> throw IllegalStateException()
+                })
             }
 
-            // Try JSON Array
-            if (trimmed.startsWith("[")) {
-                return fixToValidJson(trimmed, isArray = true)
-            }
-            return input
+            return result.toString()
         }
 
         AsyncFunction("generateResponseAsync") { handle: Int, requestId: Int, prompt: String, imagePath: String, useTools: Boolean, promise: Promise ->
@@ -1589,7 +1570,6 @@ class LingoproMultimodalModule : Module() {
                     <ImageSum> image desciption here.... </ImageSum>
                     <sum>he said this, you said that as sumamry</sum>
                     <Tools>[...]</Tools>
-                    Also, PLEASE  PRODUCE VALID JSON.
             """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1628,8 +1608,9 @@ class LingoproMultimodalModule : Module() {
                     You are a language assistant that helps decide which tools (if any) are needed for the user's request.
                     chat history context -> $modelHistoryContext
                     image given by user before summary if exists, empty if not -> $imageHistorySummary
-                    Respond with one line inside <Tools>...</Tools> using this format:
+                    Respond with tools you are going to use in between <Tools>...</Tools> using this format (list of json objects):
                     <Tools>[{"name": "tool_name", "parameters": {"param1": "value"}}]</Tools>
+                    ensure you give no extra brackets and your format inside <Tools></Tools> is list of non-malformed json objects.
                     If no tools are needed, return <Tools>[]</Tools>. Do not include anything else.
 
                     Available tools -> ${availableTools.joinToString("\n").trimIndent()}
@@ -1648,8 +1629,8 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Tools raw response: $toolsRawResponse")
 
                         val (_, _, _, toolsContent) = extractPromptTags(toolsRawResponse)
-                        // val jsonCleaned = fixMalformedJson(toolsContent)
-                        toolsJsonList = toolsToJsonList(toolsContent)
+                        val toolsContentCleaned = fixExtraBrackets(toolsContent)
+                        toolsJsonList = toolsToJsonList(toolsContentCleaned)
                         Log.d(TAG, "Parsed tools: $toolsJsonList")
                     }
 
