@@ -1548,11 +1548,11 @@ class LingoproMultimodalModule : Module() {
                 }
             }
 
-            return input
+            return json
         }
 
         fun fixMalformedJson(input: String): String {
-            val trimmed = input.trim()
+            val trimmed = input.trimIndent()
 
             // Try JSON Object
             if (trimmed.startsWith("{")) {
@@ -1589,6 +1589,7 @@ class LingoproMultimodalModule : Module() {
                     <ImageSum> image desciption here.... </ImageSum>
                     <sum>he said this, you said that as sumamry</sum>
                     <Tools>[...]</Tools>
+                    Also, PLEASE  PRODUCE VALID JSON.
             """.trimIndent()
 
                     val model = modelMap[handle]
@@ -1647,8 +1648,8 @@ class LingoproMultimodalModule : Module() {
                         Log.d(TAG, "Tools raw response: $toolsRawResponse")
 
                         val (_, _, _, toolsContent) = extractPromptTags(toolsRawResponse)
-                        val jsonCleaned = fixMalformedJson(toolsContent)
-                        toolsJsonList = toolsToJsonList(jsonCleaned)
+                        // val jsonCleaned = fixMalformedJson(toolsContent)
+                        toolsJsonList = toolsToJsonList(toolsContent)
                         Log.d(TAG, "Parsed tools: $toolsJsonList")
                     }
 
