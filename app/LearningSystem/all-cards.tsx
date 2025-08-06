@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, ScrollView, SafeAreaView, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import LingoProMultimodal from 'lingopro-multimodal-module';
 
@@ -51,7 +51,7 @@ export default function AllCardsPage() {
             setError(null);
             try {
                 // First, check if the database is initialized
-                const isDbInitialized = await LingoProMultimodal.isDatabaseInitialized();
+                const isDbInitialized = LingoProMultimodal.isDatabaseInitialized();
                 if (!isDbInitialized) {
                     setError("Database not initialized. Please ensure it's set up correctly.");
                     setIsLoading(false);
@@ -59,7 +59,7 @@ export default function AllCardsPage() {
                 }
 
                 // Fetch all SRS cards (which only returns SrsCard objects)
-                const allSrsCardsJson = await LingoProMultimodal.getAllSrsCards();
+                const allSrsCardsJson = LingoProMultimodal.getAllSrsCards();
                 const allSrsCards: SrsCard[] = JSON.parse(allSrsCardsJson);
 
                 if (allSrsCards.length === 0) {
@@ -72,6 +72,10 @@ export default function AllCardsPage() {
                 const cardsWithWordsPromises = allSrsCards.map(async (card) => {
                     try {
                         const wordJson = await LingoProMultimodal.getWordById(card.wordId);
+                        if (!wordJson) {
+                            console.error(`No word found for card ID ${card.id}`);
+                            return null;
+                        }
                         const word: Word = JSON.parse(wordJson);
                         return { card, word };
                     } catch (wordError) {
@@ -108,7 +112,7 @@ export default function AllCardsPage() {
         return (
             <SafeAreaView style={styles.errorContainer}>
                 <Text style={styles.errorText}>{error}</Text>
-                <TouchableOpacity style={styles.retryButton} onPress={() => router.replace(router.asPath)}>
+                <TouchableOpacity style={styles.retryButton} onPress={() => router.reload()}>
                     <Text style={styles.retryButtonText}>Retry</Text>
                 </TouchableOpacity>
             </SafeAreaView>

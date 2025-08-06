@@ -132,7 +132,7 @@ export default function MainPageScreen() {
   const handleKnowledgeNav = () => {
       if (selectedLanguage && selectedLevel) {
         console.log(`Getting Database information for  ${selectedLanguage} at ${selectedLevel} level.`);
-        router.push('knowledge-interface');
+        router.push('/knowledge-interface');
       } else {
         console.log("Please select a language and level first.");
       }

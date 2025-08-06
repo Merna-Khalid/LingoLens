@@ -1,23 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, ScrollView, SafeAreaView } from 'react-native';
 import { AntDesign } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import LingoProMultimodal from 'lingopro-multimodal-module';
+import LingoProMultimodal, { StatsResult } from 'lingopro-multimodal-module';
 
 // Represents the data structure for the statistics returned from the native module.
-interface StatsResult {
-  wordsCount: number;
-  totalCards: number;
-  cardsByDeckLevel: Record<string, number>;
-  reviewsOverTime: Array<{
-    date: string;
-    count: number;
-    avgEase: number;
-    avgInterval: number;
-  }>;
-}
 
 const LANGUAGE_KEY = 'lingopro_selected_language';
 
@@ -34,11 +23,14 @@ export default function Stats() {
     try {
       // Call the native module function to fetch statistics
       const storedLanguage = await AsyncStorage.getItem(LANGUAGE_KEY);
+      if (!storedLanguage) {
+        throw new Error('No language selected')
+      }
       const resultString: string = await LingoProMultimodal.fetchStats(storedLanguage);
       console.log(resultString);
       const result: StatsResult = JSON.parse(resultString);
       setStats(result);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load stats:', e);
       setError(`Failed to load statistics: ${e.message}`);
       setStats(null);

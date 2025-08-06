@@ -1,3 +1,4 @@
+import { Story, Word } from '@/modules/lingopro-multimodal-module';
 import { AntDesign, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -5,24 +6,6 @@ import * as Speech from 'expo-speech';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-// Define types
-type Word = {
-  id: number;
-  language: string;
-  word: string;
-  meaning: string;
-  writing: string;
-  wordType: string;
-  category1: string;
-  category2?: string | null;
-  phonetics?: string | null;
-  tags: string[];
-};
-
-type Story = {
-  original: string;
-  translation: string;
-};
 
 // Language configuration
 const LANGUAGE_KEY = 'lingopro_selected_language';
@@ -138,7 +121,7 @@ export default function GeneratedContentPage() {
         const langCodeToSpeak = languageCodeMap.get(selectedWord.language.toLowerCase()) || currentLanguageCode;
         Speech.speak(selectedWord.word, { language: langCodeToSpeak });
         console.log(`Successfully requested audio for word: ${selectedWord.word} in ${langCodeToSpeak}`);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error playing audio for word:", e);
         Alert.alert("Audio Error", `Failed to play audio for word: ${e.message}`);
       }
@@ -150,7 +133,7 @@ export default function GeneratedContentPage() {
       try {
         Speech.speak(generatedStory.original, { language: currentLanguageCode });
         console.log(`Successfully requested audio for story in ${currentLanguageCode}`);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error playing story audio:", e);
         Alert.alert("Audio Error", `Failed to play story audio: ${e.message}`);
       }
@@ -212,7 +195,7 @@ export default function GeneratedContentPage() {
         {/* Action Button */}
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => router.navigate('main-page')}
+          onPress={() => router.navigate('/main-page')}
         >
           <Text style={styles.addButtonText}>Go Home</Text>
         </TouchableOpacity>

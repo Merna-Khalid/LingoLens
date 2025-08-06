@@ -1,15 +1,13 @@
-import * as ImageManipulator from 'expo-image-manipulator';
 import { CameraType, CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
+import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const { width, height } = Dimensions.get('window');
 
 const MAX_WIDTH = 640;
-const MAX_HEIGHT = 224;
 
 
 export default function CameraPageScreen() {
@@ -108,7 +106,7 @@ export default function CameraPageScreen() {
         <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
           <Text style={styles.permissionButtonText}>Grant Permission</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.permissionButton, {marginTop: 10, backgroundColor: '#6c757d'}]} onPress={() => router.back()}>
+        <TouchableOpacity style={[styles.permissionButton, { marginTop: 10, backgroundColor: '#6c757d' }]} onPress={() => router.back()}>
           <Text style={styles.permissionButtonText}>Go Back</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -117,7 +115,7 @@ export default function CameraPageScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.cameraContainer}> 
+      <View style={styles.cameraContainer}>
         <CameraView
           style={StyleSheet.absoluteFillObject} // Make CameraView fill the container
           facing={facing}

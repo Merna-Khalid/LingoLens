@@ -1,11 +1,9 @@
 import { router, useLocalSearchParams } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
-const { width, height } = Dimensions.get('window');
 
 export default function QuickSessionScreen() {
   const { photoUri } = useLocalSearchParams();

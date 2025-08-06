@@ -5,7 +5,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import LingoProMultimodal from 'lingopro-multimodal-module';
+import LingoProMultimodal, { DueCardWithWord } from 'lingopro-multimodal-module';
 
 // Define the structure of a Word object
 type Word = {
@@ -34,11 +34,6 @@ type SrsCard = {
     deckLevel: string;
 };
 
-// Define the combined type for due cards fetched from the native module
-type DueCardWithWord = {
-    card: SrsCard;
-    word: Word;
-};
 
 const LANGUAGE_KEY = 'lingopro_selected_language';
 const LEVEL_KEY = 'lingopro_selected_level';
@@ -77,7 +72,7 @@ export default function App() {
             setIsLoading(true);
             try {
                 console.log("Checking database initialization status...");
-                const dbAlreadyInitialized = await LingoProMultimodal.isDatabaseInitialized();
+                const dbAlreadyInitialized = LingoProMultimodal.isDatabaseInitialized();
 
                 if (!dbAlreadyInitialized) {
                     console.log("Database not initialized. Proceeding with initialization...");
@@ -165,7 +160,9 @@ export default function App() {
             const limit = 20;
             const dueCardsWithWordsJson = await LingoProMultimodal.getDueCards(selectedLanguage, limit);
             console.log("Raw JSON from native module:", dueCardsWithWordsJson);
-
+            if(!dueCardsWithWordsJson) {
+                throw new Error("No due cards found.")
+            }
             const dueCardsWithWords: DueCardWithWord[] = JSON.parse(dueCardsWithWordsJson);
 
 
@@ -196,8 +193,8 @@ export default function App() {
     };
 
     const getTodayKey = () => {
-      const today = new Date();
-      return today.toISOString().split('T')[0]; // e.g. "2025-08-05"
+        const today = new Date();
+        return today.toISOString().split('T')[0]; // e.g. "2025-08-05"
     };
 
     const handleLogReview = async (quality: number) => {
@@ -208,7 +205,11 @@ export default function App() {
         setIsLoading(true);
         try {
             // The logReview function returns the updated SrsCard directly
-            const updatedCard: SrsCard = await LingoProMultimodal.logReview(currentCard.id, quality);
+            const updatedCardStr = LingoProMultimodal.logReview(currentCard.id, quality);
+            if (!updatedCardStr) {
+                throw new Error("Failed to log review.")
+            }
+            const updatedCard: SrsCard = JSON.parse(updatedCardStr);
             console.log('Review logged, updated card:', updatedCard);
             // After logging review, re-fetch due cards to get the next one
             await fetchDueCards();
@@ -233,19 +234,19 @@ export default function App() {
         setIsLoading(true);
         try {
             // The insertWord function in Kotlin returns the ID of the inserted word
-            const wordId = await LingoProMultimodal.insertWord({
-                language: newWordData.language,
-                word: newWordData.word,
-                meaning: newWordData.meaning,
-                writing: newWordData.writing || newWordData.word,
-                wordType: newWordData.wordType,
-                category1: newWordData.category1,
-                category2: newWordData.category2,
-                phonetics: newWordData.phonetics,
-                tags: newWordData.tags || []
-            });
+            const wordId = LingoProMultimodal.insertWord(
+                newWordData.language,
+                newWordData.word,
+                newWordData.meaning,
+                newWordData.writing || newWordData.word,
+                newWordData.wordType,
+                newWordData.category1,
+                newWordData.category2,
+                newWordData.phonetics,
+                newWordData.tags || []
+            );
 
-            if (wordId !== -1) { // Assuming -1L is returned on failure from Kotlin
+            if (!wordId) { // Assuming -1L is returned on failure from Kotlin
                 Alert.alert("Success", `Word "${newWordData.word}" added!`);
                 resetForm();
                 // After adding a word, you might want to add it to SRS immediately
@@ -269,7 +270,7 @@ export default function App() {
         }
         setIsLoading(true);
         try {
-            const allWordsJson = await LingoProMultimodal.getAllWords();
+            const allWordsJson = LingoProMultimodal.getAllWords();
             const allWords: Word[] = JSON.parse(allWordsJson); // Parse the JSON string
             const wordList = allWords.map((w: Word) => `${w.word} (${w.language}) - ${w.meaning}`).join('\n');
             Alert.alert("All Saved Words", wordList || "No words saved yet.");
@@ -406,11 +407,11 @@ export default function App() {
 
             {/* Bottom Navigation */}
             <View style={[styles.bottomNavigation, { paddingBottom: insets.bottom + 10 }]}>
-                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/all-cards')}>
+                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('/LearningSystem/all-cards')}>
                     <MaterialCommunityIcons name="cards-outline" size={24} color="#888" />
                     <Text style={[styles.navText]}>All Cards</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('LearningSystem/learning-page')}>
+                <TouchableOpacity style={styles.navItem} onPress={() => router.navigate('/LearningSystem/learning-page')}>
                     <Ionicons name="book-outline" size={24} color="#888" />
                     <Text style={styles.navText}>Learn</Text>
                 </TouchableOpacity>

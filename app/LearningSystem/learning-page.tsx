@@ -1,17 +1,12 @@
 import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, BackHandler, KeyboardAvoidingView, Platform } from 'react-native';
-import LingoProMultimodal from 'lingopro-multimodal-module';
+import LingoProMultimodal, { DueCardWithWord, SrsCard, TopicPreview } from 'lingopro-multimodal-module';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, BackHandler, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useModel } from '../context/ModelContext';
 import { DEFAULT_MODEL_PATH } from "../initial-page";
 
-interface TopicPreview {
-  topic: string;
-  wordCount: number;
-  exampleWords: string;
-}
 
 interface GeneratedContentResult {
   cards: string; // JSON string of cards array
@@ -74,37 +69,37 @@ export default function LearningPage() {
     }
   };
   // --- DATABASE INITIALIZATION ---
-   useEffect(() => {
-      const initializeDbStatus = async () => {
-        setIsLoadingContent(true); // Use isLoadingContent for overall loading
-        try {
-          console.log("Checking database initialization status...");
-          const dbAlreadyInitialized = await LingoProMultimodal.isDatabaseInitialized();
+  useEffect(() => {
+    const initializeDbStatus = async () => {
+      setIsLoadingContent(true); // Use isLoadingContent for overall loading
+      try {
+        console.log("Checking database initialization status...");
+        const dbAlreadyInitialized = await LingoProMultimodal.isDatabaseInitialized();
 
-          if (!dbAlreadyInitialized) {
-            console.log("Database not initialized. Proceeding with initialization...");
-            const dbInitSuccess = await LingoProMultimodal.initializeDatabase();
-            setIsDbInitialized(dbInitSuccess);
-            if (!dbInitSuccess) {
-              console.warn("Database initialization failed.");
-              Alert.alert("Error", "Failed to initialize SRS database.");
-              return;
-            }
-            console.log("SRS Database initialized successfully.");
-          } else {
-            console.log("SRS Database already initialized.");
-            setIsDbInitialized(true);
+        if (!dbAlreadyInitialized) {
+          console.log("Database not initialized. Proceeding with initialization...");
+          const dbInitSuccess = await LingoProMultimodal.initializeDatabase();
+          setIsDbInitialized(dbInitSuccess);
+          if (!dbInitSuccess) {
+            console.warn("Database initialization failed.");
+            Alert.alert("Error", "Failed to initialize SRS database.");
+            return;
           }
-        } catch (error: any) {
-          console.error("SRS Initialization error:", error);
-          Alert.alert("Error", `Failed to initialize SRS: ${error.message}`);
-        } finally {
-          setIsLoadingContent(false);
+          console.log("SRS Database initialized successfully.");
+        } else {
+          console.log("SRS Database already initialized.");
+          setIsDbInitialized(true);
         }
-      };
+      } catch (error: any) {
+        console.error("SRS Initialization error:", error);
+        Alert.alert("Error", `Failed to initialize SRS: ${error.message}`);
+      } finally {
+        setIsLoadingContent(false);
+      }
+    };
 
-      initializeDbStatus();
-   }, []);
+    initializeDbStatus();
+  }, []);
 
   // --- MODEL LOADING AND RELEASE ---
   useEffect(() => {
@@ -115,13 +110,13 @@ export default function LearningPage() {
   }, [isModelLoaded, isLoadingModel, loadModel]);
 
   // --- LOAD USER SETTINGS & FETCH RECOMMENDATIONS (after DB and Model are ready) ---
-    useEffect(() => {
-      if (isDbInitialized && isModelLoaded && modelHandle !== null) {
-        console.log("Database and Model confirmed ready. Loading user settings and fetching topics.");
-        loadUserSettings(); // Load settings only once here
-        fetchRecommendations(); // Fetch recommendations only when model and DB are ready
-      }
-    }, [isDbInitialized, isModelLoaded, modelHandle, selectedLanguage]); // Add modelHandle to dependencies
+  useEffect(() => {
+    if (isDbInitialized && isModelLoaded && modelHandle !== null) {
+      console.log("Database and Model confirmed ready. Loading user settings and fetching topics.");
+      loadUserSettings(); // Load settings only once here
+      fetchRecommendations(); // Fetch recommendations only when model and DB are ready
+    }
+  }, [isDbInitialized, isModelLoaded, modelHandle, selectedLanguage]); // Add modelHandle to dependencies
 
   // Handle back button press to cancel ongoing requests and release the model
   useEffect(() => {
@@ -151,7 +146,7 @@ export default function LearningPage() {
     const processSingleTopic = async (topic: string): Promise<TopicPreview> => {
       try {
         const previewJson = await LingoProMultimodal.getTopicPreview(topic, language);
-        const preview = JSON.parse(previewJson);
+        const preview: TopicPreview = JSON.parse(previewJson);
 
         // Validate response structure
         if (typeof preview.wordCount !== 'number' || !preview.exampleWords) {
@@ -161,16 +156,14 @@ export default function LearningPage() {
         return {
           topic: preview.topic || topic,
           wordCount: preview.wordCount || 0,
-          exampleWords: Array.isArray(preview.exampleWords)
-            ? preview.exampleWords.join(', ')
-            : String(preview.exampleWords || 'No examples'),
+          exampleWords: preview.exampleWords,
         };
       } catch (error) {
         console.warn(`Topic preview failed for "${topic}":`, error);
         return {
           topic,
           wordCount: 0,
-          exampleWords: 'Loading failed',
+          exampleWords: ['Loading failed'],
         };
       }
     };
@@ -187,44 +180,44 @@ export default function LearningPage() {
   };
 
   const fetchRecommendations = useCallback(async () => {
-      // This check is now redundant due to useEffect dependencies, but good for clarity
-      if (!isModelLoaded || modelHandle === null) {
-        console.log("Model not loaded or modelHandle is null, skipping recommendation fetch.");
+    // This check is now redundant due to useEffect dependencies, but good for clarity
+    if (!isModelLoaded || modelHandle === null) {
+      console.log("Model not loaded or modelHandle is null, skipping recommendation fetch.");
+      return;
+    }
+
+    setIsLoadingContent(true);
+    try {
+      const count = 10;
+      const topicStringsRaw = await LingoProMultimodal.getRecommendedTopics(
+        modelHandle,
+        Math.floor(Math.random() * 1000000),
+        selectedLanguage,
+        count
+      );
+
+      // Safely parse topics
+      const topicStrings = JSON.parse(topicStringsRaw) || [];
+
+      if (!topicStrings.length) {
+        console.log('No topics received from model');
         return;
       }
 
-      setIsLoadingContent(true);
-      try {
-        const count = 10;
-        const topicStringsRaw = await LingoProMultimodal.getRecommendedTopics(
-          modelHandle,
-          Math.floor(Math.random() * 1000000),
-          selectedLanguage,
-          count
-        );
+      // Process previews with error handling per topic
+      const previews = await getTopicPreviews(topicStrings, selectedLanguage, { batchSize: 3 });
 
-        // Safely parse topics
-        const topicStrings = JSON.parse(topicStringsRaw) || [];
-
-        if (!topicStrings.length) {
-          console.log('No topics received from model');
-          return;
-        }
-
-        // Process previews with error handling per topic
-        const previews = await getTopicPreviews(topicStrings, selectedLanguage, { batchSize: 3 });
-
-        setRecommendedTopics({
-          priorityTopics: previews.slice(0, 3),
-          otherTopics: previews.slice(3),
-        });
-      } catch (error) {
-        console.error('Error in recommendation flow:', error);
-        // No alert - empty state UI will handle it
-      } finally {
-        setIsLoadingContent(false);
-      }
-    }, [isModelLoaded, modelHandle, selectedLanguage]); // Add modelHandle to dependencies
+      setRecommendedTopics({
+        priorityTopics: previews.slice(0, 3),
+        otherTopics: previews.slice(3),
+      });
+    } catch (error) {
+      console.error('Error in recommendation flow:', error);
+      // No alert - empty state UI will handle it
+    } finally {
+      setIsLoadingContent(false);
+    }
+  }, [isModelLoaded, modelHandle, selectedLanguage]); // Add modelHandle to dependencies
 
 
   // --- HANDLE GENERATING CONTENT ---
@@ -246,28 +239,22 @@ export default function LearningPage() {
 
     try {
       // Type the result explicitly
-      const result = await LingoProMultimodal.generateTopicCards(
+      const result: any = await LingoProMultimodal.generateTopicCards(
         modelHandle,
         Math.floor(Math.random() * 100000),
         topicToGenerate,
         selectedLanguage,
         count,
         "a1" // deckLevel
-      ) as {
-        cards: string; // JSON string
-        content: string;
-        translation: string;
-      };
+      );
 
       if (!result?.cards || !result.content) {
         Alert.alert("Error", "Failed to generate content. Please try again.");
         return;
       }
 
-      console.log('RAW RESULT:', JSON.stringify(result, null, 2));
-
       // Parse the cards JSON string with error handling
-      let cardsArray: Array<{ card: SrsCard; word: Word }>;
+      let cardsArray: Array<DueCardWithWord>;
       try {
         cardsArray = JSON.parse(result.cards);
       } catch (e) {
@@ -278,7 +265,7 @@ export default function LearningPage() {
 
       // Process words with proper type checking
       const wordsForDisplay: Word[] = cardsArray
-        .filter((item): item is { card: SrsCard; word: Word } => {
+        .filter((item): item is DueCardWithWord => {
           if (!item?.word) {
             console.warn('Undefined word encountered:', item);
             return false;
@@ -304,7 +291,7 @@ export default function LearningPage() {
 
       // Navigate with validated data
       router.navigate({
-        pathname: 'LearningSystem/generated-content-page',
+        pathname: '/LearningSystem/generated-content-page',
         params: {
           generatedWords: JSON.stringify(wordsForDisplay),
           generatedStory: JSON.stringify({
@@ -314,7 +301,7 @@ export default function LearningPage() {
         },
       });
 
-    } catch (error) {
+    } catch (error: any) {
       if (error.name !== 'AbortError') {
         const errorMessage = error instanceof Error ? error.message : String(error);
         Alert.alert(
@@ -490,11 +477,11 @@ const styles = StyleSheet.create({
     color: '#555',
   },
   errorText: {
-      marginTop: 10,
-      fontSize: 16,
-      color: '#D32F2F', // Red for errors
-      textAlign: 'center',
-   },
+    marginTop: 10,
+    fontSize: 16,
+    color: '#D32F2F', // Red for errors
+    textAlign: 'center',
+  },
   learningTitle: {
     fontSize: 22,
     fontWeight: 'bold',
