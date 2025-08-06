@@ -451,13 +451,13 @@ export default function ChatScreen() {
 
       setMessages(prevMessages => [...prevMessages, {
         id: Date.now().toString(),
-        text: "Here is an image for us to discuss.",
+        text: "What is this called?",
         sender: 'user',
         timestamp: getTimestamp(),
         attachedImageUrl: paramImageUri,
       }]);
 
-      const initialPrompt = "Can you describe the image in English and in the learning language.";
+      const initialPrompt = "Can you list the objects in this image in both English and the learning language.";
       processMessageWithAI(initialPrompt, null, paramImageUri, 'text');
     } else if (!paramImageUri) {
       router.replace('/main-page');
