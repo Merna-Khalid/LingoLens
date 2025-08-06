@@ -7,8 +7,8 @@ import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, Touch
 import { useModel } from './context/ModelContext';
 
 
+const DOWNLOADABLE_MODEL_URL = "https://www.huggingface.co/MrZeggers/gemma-3n-mobile/resolve/main/gemma-3n-E4B-it-int4.task?download=true";
 // const DOWNLOADABLE_MODEL_URL = "https://huggingface.co/MrZeggers/gemma-3n-mobile/resolve/main/gemma-3n-E4B-it-int4.task?download=true";
-const DOWNLOADABLE_MODEL_URL = "http://192.168.1.9:8069/gemma-3n-E4B-it-int4.task";
 const DOWNLOADABLE_MODEL_NAME = "model.task";
 
 const MODELS_BASE_DIR = `${FileSystem.documentDirectory}`;
