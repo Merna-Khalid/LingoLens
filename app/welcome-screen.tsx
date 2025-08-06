@@ -54,10 +54,11 @@ export default function WelcomeScreen() {
       <View style={styles.container}>
         <View style={styles.headerSection}>
           <Image
-            source={{ uri: 'https://placehold.co/80x80/007AFF/FFFFFF?text=A' }}
+            source={require('../assets/images/icon.png')}
             style={styles.lingoLensIcon}
             accessibilityLabel="LingoLens Icon"
           />
+
           <Text style={styles.lingoLensTitle}>LingoLens</Text>
         </View>
 
