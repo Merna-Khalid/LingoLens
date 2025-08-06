@@ -1,10 +1,27 @@
 # LingoLens: Multimodal Language Learning Companion
 
 ---
+![LingoLens Logo](./assets/LingoLens/LingoLensLogo.png)
 
 ## Project Overview
 
 LingoLens is a sophisticated mobile application developed using Expo and React Native, designed to revolutionize language acquisition. It provides users with an immersive and interactive platform that integrates advanced AI capabilities for learning, progress tracking, and real-world language engagement through multimodal interactions.
+
+
+⚠️ Don't forget to toggle **Agentic Mode** in the chat to allow the model to access the database. This is manual by design to improve inference time on mobile devices.
+
+![Agentic Mode Toggle](./assets/LingoLens/trigger.png)
+
+the reason for this to be manual is to speed up the inference time on mobile devices
+
+---
+## Release and Model download
+
+**Release 0.0.1-alpha**: [Download from GitHub](https://github.com/Merna-Khalid/LingoLens/releases/tag/0.0.1-alpha)
+
+Model files on Hugging Face:
+- [Gemma 3n E2B](https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/tree/main)
+- [Gemma 3n E4B](https://huggingface.co/google/gemma-3n-E4B-it-litert-preview/tree/main)
 
 ---
 
@@ -17,10 +34,12 @@ LingoLens is a sophisticated mobile application developed using Expo and React N
 * **Interactive Session Preview**:
     * Presents a dedicated screen for immediate review of flashcards.
     * SRS for improved learning and AI model integration.
+    * ![QuickSession QuickSession](./assets/LingoLens/flashcard1.jpg)
 
 * **AI-Powered Multimodal Chat**:
     * **Text Chat**: Facilitates text-based conversations with the AI regarding the captured image. Utilizes **Gemma 3n** for intelligent text generation.
     * **Image Input**: Model is able to analyze images provided by the user to extract words and input them into the database to be used as flashcards.
+    * ![QuickSession QuickSession](./assets/LingoLens/quick-session-chat.jpg)
 
 ---
 
@@ -34,7 +53,7 @@ LingoLens differentiates itself from traditional language learning applications 
 * **Spaced Repetition System (SRS)**: An intelligent SRS personalizes content, adapts to your performance, and effectively reinforces challenging material through multimodal, context-rich reviews, optimizing retention.
 
 This comprehensive feature set addresses the limitations of conventional language learning apps by providing personalized, context-rich, and immediately applicable language learning experiences.
-
+[QuickSession QuickSession](./assets/LingoLens/contextual-story.jpg)
 ---
 
 ## Technologies Utilized
@@ -88,7 +107,7 @@ To set up and run the LingoLens application locally, follow these instructions:
 7.  **Chat Interface (Text/Voice)**: Interact with the AI regarding the image content.
     * **Voice Chat**: Press and hold the red record button to speak your message.
     * **Text Chat**: Type your message into the designated input field.
-
+OR
 5.  **Start Session**: SRS learning session.
     * Shows flashcards for review, no flashcards if all is due
     * choose either Learn or Stats tab, there is a deck tab to show all learned words per selected languages.
